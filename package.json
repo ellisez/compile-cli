@@ -1,0 +1,16 @@
+{
+  "name": "@compile/cli",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "bin": "bin/compile",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "commander": "^11.0.0",
+    "picocolors": "^1.0.0"
+  }
+}
