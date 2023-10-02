@@ -4,6 +4,7 @@
   "version": "0.0.1",
   "type": "module",
   "bin": "bin/compile",
+  "author": "sss",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc && vite build",

@@ -3,6 +3,10 @@ import { createColors } from 'picocolors';
 const colors = createColors(true);
 
 class Log {
+    fatal(...msg) {
+        this.error(msg);
+        process.exit(-1);
+    }
     error(...msg) {
         let res = '';
         for (const m of msg) {
@@ -50,6 +54,11 @@ class Log {
 
     clear() {
         console.clear();
+        return this;
+    }
+
+    custom(msg, color='inverse') {
+        console.log(colors[color](msg));
         return this;
     }
 }
