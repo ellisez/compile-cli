@@ -40,10 +40,10 @@ export default class Service {
             const outputOptionsList = this.options.output;
             bundle = await rollup(this.options);
             for (const outputOptions of outputOptionsList) {
-                if ((mode | 0b001) === 0b001) {
+                if ((mode & 0b001) === 0b001) {
                     await bundle.generate(outputOptions);
                 }
-                if ((mode | 0b010) === 0b010) {
+                if ((mode & 0b010) === 0b010) {
                     await bundle.write(outputOptions);
                 }
             }
