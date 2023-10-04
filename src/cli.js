@@ -1,9 +1,9 @@
 import { Command } from "commander";
 import process from 'node:process';
 import log from './log.js';
-import pkgInfo from "./pkg-info.js";
+import pkg from "./pkg.js";
 
-if (!pkgInfo) {
+if (!pkg) {
     log.error('This is not a correct application, "package.json" cannot be found.');
     process.exit(-1);
 }

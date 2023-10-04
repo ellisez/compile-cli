@@ -12,7 +12,7 @@ const cwd = process.cwd();
 const tabSpace = '\t';
 
 function toClassName(basename) {
-    return basename.replace(/(^[a-z])|[._]([a-z])/g, ($1, $2) => {
+    return basename.replace(/(^[a-z])|[\._]([a-z])/g, (_, $1, $2) => {
         if ($2) return $2.toUpperCase()
         return $1.toUpperCase();
     });
@@ -49,15 +49,19 @@ const canUseVarKeyword = versionObject('java')[0] >= 10;
 
 class Printer {
     #level = 0;
-    #indent = '';
+    indent = '';
 
     #seq = ' ';
 
     constructor(level = 0) {
         this.#level = level;
         for (let i = 1; i <= level; i++) {
-            this.#indent += tabSpace;
+            this.indent += tabSpace;
         }
+    }
+
+    get isEmpty() {
+        return this.#lines.length == 0;
     }
 
     get level() {
@@ -66,12 +70,12 @@ class Printer {
 
     enterClosure() {
         this.#level++;
-        this.#indent += tabSpace;
+        this.indent += tabSpace;
     }
 
     exitClosure() {
         this.#level--;
-        this.#indent = this.#indent.slice(0, -tabSpace.length);
+        this.indent = this.indent.slice(0, -tabSpace.length);
     }
 
     #lines = [];
@@ -81,7 +85,7 @@ class Printer {
     }
 
     writeln(text = '') {
-        this.#lines.push('\n' + this.#indent);
+        this.#lines.push('\n' + this.indent);
         if (text) {
             this.#lines.push(text);
         }
@@ -142,6 +146,10 @@ class Parser extends Printer {
         this.javaModule = new JavaModule(this);
     }
 
+    get root() {
+        return this.javaModule.root;
+    }
+
     get imports() {
         return this.javaModule.imports;
     }
@@ -174,11 +182,11 @@ class Parser extends Printer {
         return this.javaModule.addImport(classFullName);
     }
 
-    createAlias(alias, classFullName, identifier = 'default') {
-        const hasLoad = this.addImport(classFullName);
+    createAlias(alias, classFullName, identifier = null) {
+        this.addImport(classFullName);
 
+        identifier = identifier || toModuleName(classFullName);
         const importIdentifier = new ImportIdentifier();
-        importIdentifier.isFull = !hasLoad;
         importIdentifier.module = classFullName;
         importIdentifier.identifier = identifier;
         this.alias[alias] = importIdentifier;
@@ -208,28 +216,13 @@ class Parser extends Printer {
         this.write('/* Generate by Compile.JS */');
         this.writeln(`package ${this.packageName};`);
 
+        const rootCode = this.root.toString();
+
         for (let javaImport of this.imports) {
             this.writeln(`import ${javaImport};`);
         }
 
-        this.writeln(`public class ${this.className} {`);
-        this.enterClosure();
-
-        let initCode = this.#initPrinter.toString();
-        if (initCode.length > 0) {
-            this.writeln('static {');
-            this.enterClosure();
-            this.write(initCode);
-            this.exitClosure();
-            this.writeln('}');
-        }
-
-        let bodyCode = this.#codePrinter.toString();
-        this.writeln(bodyCode);
-
-        this.exitClosure();
-        this.writeln('}');
-        this.writeln();
+        this.writeln(rootCode);
 
         return super.toString();
     }
@@ -256,115 +249,126 @@ class Parser extends Printer {
         this.javaModule.classFullName = classFullName;
         javaContext.setModule(this.javaModule);
 
+        const root = this.javaModule.root;
+        root.module = classFullName;
+        root.identifier = className;
+        root.type = className;
+        root.accessor = 'public';
+        this.javaModule.exports[className] = root;
+
+        root.enterClosure();
+
         const statements = sourceFile.statements;
         for (const statement of statements) {
             switch (statement.kind) {
                 /// import / export
                 case typescript.SyntaxKind.ImportDeclaration:
-                    this.ImportDeclaration(statement, this.#initPrinter);
+                    this.ImportDeclaration(statement, this.root.staticBlock);
                     break;
                 case typescript.SyntaxKind.ExportAssignment:
-                    this.ExportAssignment(statement, this.#initPrinter);
+                    this.ExportAssignment(statement, this.root.staticBlock);
                     break;
                 /// function declaration
                 case typescript.SyntaxKind.FunctionDeclaration:
-                    this.#codePrinter.writeln();
-                    this.FunctionDeclaration(statement, this.#codePrinter);
+                    this.root.writeln();
+                    this.FunctionDeclaration(statement, this.root);
                     break;
                 /// const / let =
                 case typescript.SyntaxKind.VariableStatement:
-                    this.#codePrinter.writeln();
-                    this.VariableStatement(statement, this.#codePrinter);
+                    this.root.writeln();
+                    this.VariableStatement(statement, this.root);
                     break;
                 case typescript.SyntaxKind.ClassDeclaration:
-                    this.#codePrinter.writeln();
-                    this.ClassDeclaration(statement, this.#codePrinter);
+                    this.root.writeln();
+                    this.ClassDeclaration(statement, this.root);
                     break;
                 /// call / new / operator
                 case typescript.SyntaxKind.ExpressionStatement:
-                    this.#initPrinter.writeln();
-                    this.ExpressionStatement(statement, this.#initPrinter);
+                    this.root.staticBlock.writeln();
+                    this.ExpressionStatement(statement, this.root.staticBlock);
                     break;
 
                 /// if / else if / else
                 case typescript.SyntaxKind.IfStatement:
-                    this.#initPrinter.writeln();
-                    this.IfStatement(statement, this.#initPrinter);
+                    this.root.staticBlock.writeln();
+                    this.IfStatement(statement, this.root.staticBlock);
                     break;
                 /// for / do-while / while / break / continue
                 case typescript.SyntaxKind.DoStatement:
-                    this.#initPrinter.writeln();
-                    this.DoStatement(statement, this.#initPrinter);
+                    this.root.staticBlock.writeln();
+                    this.DoStatement(statement, this.root.staticBlock);
                     break;
                 case typescript.SyntaxKind.WhileStatement:
-                    this.#initPrinter.writeln();
-                    this.WhileStatement(statement, this.#initPrinter);
+                    this.root.staticBlock.writeln();
+                    this.WhileStatement(statement, this.root.staticBlock);
                     break;
                 case typescript.SyntaxKind.ForStatement:
-                    this.#initPrinter.writeln();
-                    this.ForStatement(statement, this.#initPrinter);
+                    this.root.staticBlock.writeln();
+                    this.ForStatement(statement, this.root.staticBlock);
                     break;
                 case typescript.SyntaxKind.ForInStatement:
-                    this.#initPrinter.writeln();
-                    this.ForInStatement(statement, this.#initPrinter);
+                    this.root.staticBlock.writeln();
+                    this.ForInStatement(statement, this.root.staticBlock);
                     break;
                 case typescript.SyntaxKind.ForOfStatement:
-                    this.#initPrinter.writeln();
-                    this.ForOfStatement(statement, this.#initPrinter);
+                    this.root.staticBlock.writeln();
+                    this.ForOfStatement(statement, this.root.staticBlock);
                     break;
                 case typescript.SyntaxKind.ReturnStatement:
-                    this.#initPrinter.writeln();
-                    this.ReturnStatement(statement, this.#initPrinter);
+                    this.root.staticBlock.writeln();
+                    this.ReturnStatement(statement, this.root.staticBlock);
                     break;
                 /// with / switch
                 case typescript.SyntaxKind.WithStatement:
-                    this.#initPrinter.writeln();
-                    this.WhileStatement(statement, this.#initPrinter);
+                    this.root.staticBlock.writeln();
+                    this.WhileStatement(statement, this.root.staticBlock);
                     break;
                 case typescript.SyntaxKind.SwitchStatement:
-                    this.#initPrinter.writeln();
-                    this.SwitchStatement(statement, this.#initPrinter);
+                    this.root.staticBlock.writeln();
+                    this.SwitchStatement(statement, this.root.staticBlock);
                     break;
                 /// label : xxx
                 case typescript.SyntaxKind.LabeledStatement:
-                    this.#initPrinter.writeln();
-                    this.LabeledStatement(statement, this.#initPrinter);
+                    this.root.staticBlock.writeln();
+                    this.LabeledStatement(statement, this.root.staticBlock);
                     break;
                 /// throw xxx
                 case typescript.SyntaxKind.ThrowStatement:
-                    this.#initPrinter.writeln();
-                    this.ThrowStatement(statement, this.#initPrinter);
+                    this.root.staticBlock.writeln();
+                    this.ThrowStatement(statement, this.root.staticBlock);
                     break;
                 /// try catch finally
                 case typescript.SyntaxKind.TryStatement:
-                    this.#initPrinter.writeln();
-                    this.TryStatement(statement, this.#initPrinter);
+                    this.root.staticBlock.writeln();
+                    this.TryStatement(statement, this.root.staticBlock);
                     break;
                 case typescript.SyntaxKind.CatchClause:
-                    this.#initPrinter.writeln();
-                    this.CatchClause(statement, this.#initPrinter);
+                    this.root.staticBlock.writeln();
+                    this.CatchClause(statement, this.root.staticBlock);
                     break;
 
             }
         }
+        root.exitClosure();
     }
 
     /// custom eval
     EvalTypeReference(astNode, rawType) {
-        let type = rawType;
+        let expression = rawType;
         let module = null;
         const typeDeclaration = this.EvalIdentifier(astNode, rawType);
         if (typeDeclaration) {
             module = typeDeclaration.module;
-            type = typeDeclaration.identifier;
-            if (type === 'default') {
-                type = toModuleName(module);
+            if (typeDeclaration instanceof ImportIdentifier) {
+                expression = () => typeDeclaration.expression(this.javaModule);
+            } else {
+                expression = typeDeclaration.expression(this.javaModule);
             }
-        } else if (type === 'Date') {
+        } else if (expression === 'Date') {
             this.addImport('java.util.Date');
             module = 'java.util.Date';
         }
-        return { expression: type, module };
+        return { expression, module };
     }
 
     EvalJavaType(typeNode, defaultType = 'Object') {
@@ -386,8 +390,16 @@ class Parser extends Printer {
                 case typescript.SyntaxKind.ArrayType:
                     const elementType = this.EvalJavaType(typeNode.elementType);
                     module = elementType.module;
-                    let elementExpression = elementType.expression ? elementType.expression : '';
-                    expression = `${elementExpression}[]`;
+                    if (typeof (elementType.expression) === 'function') {
+                        expression = () => {
+                            let elementExpression = elementType.expression ? elementType.expression : 'Object';
+                            elementExpression = elementExpression();
+                            return `${elementExpression}[]`;
+                        }
+                    } else {
+                        let elementExpression = elementType.expression ? elementType.expression : 'Object';
+                        expression = `${elementExpression}[]`;
+                    }
                     break;
                 case typescript.SyntaxKind.ObjectKeyword:
                     expression = 'Object';
@@ -525,6 +537,15 @@ class Parser extends Printer {
             case typescript.SyntaxKind.NewExpression:
                 typeInference = this.NewExpression(astNode, printer);
                 break;
+            case typescript.SyntaxKind.CallExpression:
+                typeInference = this.CallExpression(astNode, printer);
+                break;
+            case typescript.SyntaxKind.BinaryExpression:
+                typeInference = this.BinaryExpression(astNode, printer);
+                break;
+            case typescript.SyntaxKind.PropertyAccessExpression:
+                typeInference = this.PropertyAccessExpression(astNode, printer);
+                break;
             case typescript.SyntaxKind.Identifier:
                 typeInference = this.Identifier(astNode, printer);
                 if (printer.isStatic) {
@@ -548,16 +569,17 @@ class Parser extends Printer {
                 hasMultiLine = true;
                 printer.enterClosure();
                 if (i !== 0) {
-                    printer.write('\0,');
+                    printer.write('\0, ');
                 }
                 printer.writeln();
                 itemTypeInference = this.EvalValue(element, printer);
                 printer.exitClosure();
             } else {
                 if (i !== 0) {
-                    printer.write('\0,');
+                    printer.write('\0, ');
                 }
                 let element = elements[i];
+                printer.write('\0');
                 itemTypeInference = this.EvalValue(element, printer);
             }
             if (!typeInference) {
@@ -570,6 +592,45 @@ class Parser extends Printer {
             printer.writeln();
         }
         return typeInference + '[]';
+    }
+
+    EvalAssignValue(initializer, printer, defaultType = 'var') {
+        let type = defaultType;
+        if (initializer) {
+            printer.write(' =');
+            let typeInference = this.EvalValue(initializer, printer);
+
+            if (printer.rawType) {
+                type = printer.rawType;
+            } else if (typeInference) {
+                // use typeInference can trigger FunctionInterface import.
+                type = typeInference;
+                const initializerEval = initializer.eval;
+                if (initializerEval instanceof FunctionIdentifier || initializerEval instanceof LambdaIdentifier) {
+                    const functionInterface = initializerEval.functionInterface;
+                    const functionType = functionInterface.type;
+                    javaContext.functionInterface.set(functionType, functionInterface);
+                    this.addImport(`${config.java.package}.FunctionInterface.${functionType}`);
+                    printer.isFunction = true;
+                } else if (initializerEval instanceof ImportIdentifier) {
+                    printer.isFunction = null;
+                    type = () => {
+                        const realDeclaration = initializerEval.declaration;
+                        if (realDeclaration instanceof FunctionIdentifier || realDeclaration instanceof LambdaIdentifier) {
+                            const functionInterface = realDeclaration.functionInterface;
+                            const functionType = functionInterface.type;
+                            javaContext.functionInterface.set(functionType, functionInterface);
+                            this.addImport(`${config.java.package}.FunctionInterface.${functionType}`);
+                            printer.isFunction = true;
+                        } else {
+                            printer.isFunction = false;
+                        }
+                        return realDeclaration.type;
+                    }
+                }
+            }
+        }
+        printer.type = type;
     }
 
     /// ast parse
@@ -822,9 +883,43 @@ class Parser extends Printer {
     Identifier(astNode, printer) {
         const identifierName = astNode.escapedText;
         const identifierObject = this.EvalIdentifier(astNode.parent, identifierName);
+        if (!identifierObject) {
+            this.pluginContext.error(`Unknown ${identifierName}`, astNode.pos);
+        }
         astNode.eval = identifierObject;
-        printer.write(() => identifierObject.expression);
-        return () => identifierObject.type;
+
+        switch (astNode.parent.kind) {
+            /// declaration
+            case typescript.SyntaxKind.FunctionDeclaration:
+            case typescript.SyntaxKind.VariableDeclaration:
+            case typescript.SyntaxKind.PropertyDeclaration:
+                if (identifierObject instanceof ImportIdentifier) {
+                    printer.write(() => identifierObject.assign(this.javaModule));
+                } else {
+                    printer.write(identifierObject.assign(this.javaModule));
+                }
+                break;
+            case typescript.SyntaxKind.CallExpression:
+                /// call
+                if (identifierObject instanceof ImportIdentifier) {
+                    printer.write(() => identifierObject.call(this.javaModule));
+                } else {
+                    printer.write(identifierObject.call(this.javaModule));
+                }
+                break;
+            default:
+                /// ref
+                if (identifierObject instanceof ImportIdentifier) {
+                    printer.write(() => identifierObject.expression(this.javaModule));
+                } else {
+                    printer.write(identifierObject.expression(this.javaModule));
+                }
+        }
+        if (identifierObject instanceof ImportIdentifier) {
+            return () => identifierObject.type;
+        } else {
+            return identifierObject.type;
+        }
     }
 
     PrivateIdentifier(astNode, printer) {
@@ -1097,11 +1192,19 @@ class Parser extends Printer {
         if (printer.returnTypeModule) {
             functionInterface.imports.add(printer.returnTypeModule);
         }
-        let code = '';
-        for (let parameter of parameters) {
-            if (code.length) code += ', ';
-            const parameterObject = this.EvalParameterType(parameter, printer);
-            code += `${parameterObject.type} ${parameterObject.name}`;
+
+        const paramPrinter = new Printer(printer.level);
+        printer.parameters = paramPrinter;
+
+        paramPrinter.write('\0');
+        for (let i = 0; i < parameters.length; i++) {
+            let parameter = parameters[i];
+            if (i !== 0) {
+                paramPrinter.write(',');
+            }
+            const parameterObject = this.EvalParameterType(parameter, paramPrinter);
+            paramPrinter.write(parameterObject.type);
+            paramPrinter.write(parameterObject.name);
             functionInterface.parameters.push(parameterObject.type);
             if (parameterObject.module) {
                 functionInterface.imports.add(parameterObject.module);
@@ -1111,18 +1214,22 @@ class Parser extends Printer {
         printer.functionInterface = functionInterface;
         const functionType = functionInterface.type;
         printer.type = functionType;
-        printer.parameters = code;
     }
 
     ConstructorParameter(astNode, printer) {
         const parameters = astNode.parameters;
-        let code = '';
-        for (let parameter of parameters) {
-            if (code.length) code += ', ';
+
+        const paramPrinter = new Printer(printer.level);
+        printer.parameters = paramPrinter;
+
+        paramPrinter.write('\0');
+        for (let i = 0; i < parameters.length; i++) {
+            let parameter = parameters[i];
+            if (i !== 0) paramPrinter.write(',');
             const parameterObject = this.EvalParameterType(parameter, printer);
-            code += `${parameterObject.type} ${parameterObject.name}`;
+            paramPrinter.write(parameterObject.type);
+            paramPrinter.write(parameterObject.name);
         }
-        printer.parameters = code;
     }
 
     Decorator(astNode, printer) {
@@ -1136,13 +1243,16 @@ class Parser extends Printer {
         astNode.eval = variableIdentifier;
         printer.write(variableIdentifier);
 
+        variableIdentifier.module = this.classFullName;
+
         variableIdentifier.accessor = 'public';
 
-        const javaType = this.EvalJavaType(astNode.type, 'Object');
+        const javaType = this.EvalJavaType(astNode.type, '');
         variableIdentifier.rawType = javaType.expression;
         variableIdentifier.rawTypeModule = javaType.module;
 
-        variableIdentifier.identifier = astNode.name.escapedText;
+        const name = astNode.name.escapedText;
+        variableIdentifier.identifier = name;
 
         const modifiers = astNode.modifiers;
         if (modifiers) {
@@ -1165,15 +1275,15 @@ class Parser extends Printer {
                 }
             }
         }
+        // exports
+        if (astNode.parent.isTop && variableIdentifier.accessor === 'public' && variableIdentifier.isStatic === true) {
+            this.exports[name] = variableIdentifier;
+        }
         // initializer
         const defaultType = 'Object';
-        let typeInference = null;
         const initializer = astNode.initializer;
-        if (initializer) {
-            variableIdentifier.write(' =');
-            typeInference = this.EvalValue(initializer, variableIdentifier);
-        }
-        variableIdentifier.type = variableIdentifier.rawType || typeInference || defaultType;
+        this.EvalAssignValue(initializer, variableIdentifier, defaultType);
+
         variableIdentifier.write('\0;');
     }
 
@@ -1181,7 +1291,55 @@ class Parser extends Printer {
     }
 
     MethodDeclaration(astNode, printer) {
-        debugger;
+        const functionIdentifier = new FunctionIdentifier(printer.level);
+        astNode.eval = functionIdentifier;
+        printer.write(functionIdentifier);
+
+        functionIdentifier.accessor = 'public';
+
+        const returnType = this.EvalReturnType(astNode.type);
+        functionIdentifier.returnType = returnType.expression;
+        functionIdentifier.returnTypeModule = returnType.module;
+
+        const modifiers = astNode.modifiers;
+        if (modifiers) {
+            for (let modifier of modifiers) {
+                switch (modifier.kind) {
+                    case typescript.SyntaxKind.PublicKeyword:
+                        functionIdentifier.accessor = 'public';
+                        break;
+                    case typescript.SyntaxKind.PrivateKeyword:
+                        functionIdentifier.accessor = 'private';
+                        break;
+                    case typescript.SyntaxKind.ProtectedKeyword:
+                        functionIdentifier.accessor = 'protected';
+                        break;
+                    case typescript.SyntaxKind.ConstKeyword:
+                        functionIdentifier.isFinal = true;
+                        break;
+                    case typescript.SyntaxKind.StaticKeyword:
+                        functionIdentifier.isStatic = true;
+                        break;
+                }
+            }
+        }
+
+        // name
+        const name = astNode.name.escapedText;
+        functionIdentifier.identifier = name;
+
+        // exports
+        if (astNode.parent.isTop && functionIdentifier.accessor === 'public' && functionIdentifier.isStatic === true) {
+            this.exports[name] = functionIdentifier;
+        }
+
+        this.FunctionParameter(astNode, functionIdentifier);
+
+        functionIdentifier.write(' {');
+        functionIdentifier.enterClosure();
+        this.Block(astNode.body, functionIdentifier);
+        functionIdentifier.exitClosure();
+        functionIdentifier.writeln('}');
     }
 
     ClassStaticBlockDeclaration(astNode, printer) {
@@ -1356,7 +1514,7 @@ class Parser extends Printer {
         }
         printer.write('\0(');
         this.EvalMultiValue(argumentsList, printer);
-        printer.write('\0);');
+        printer.write('\0)');
     }
 
     NewExpression(astNode, printer) {
@@ -1364,7 +1522,8 @@ class Parser extends Printer {
         const expression = astNode.expression;
         const typeReference = this.EvalTypeReference(astNode, expression.escapedText);
         const className = typeReference.expression;
-        printer.write(className + '(');
+        printer.write(className)
+        printer.write('\0(');
         this.EvalMultiValue(astNode.arguments, printer);
         printer.write('\0)');
         return className;
@@ -1427,10 +1586,9 @@ class Parser extends Printer {
     }
 
     BinaryExpression(astNode, printer) {
-        this.BinaryValuue(astNode.left, printer);
+        this.EvalValue(astNode.left, printer);
         this.BinaryOperation(astNode.operatorToken, printer);
-        this.BinaryValuue(astNode.right, printer);
-        printer.write('\0;');
+        this.EvalValue(astNode.right, printer);
     }
 
     BinaryOperation(astNode, printer) {
@@ -1440,6 +1598,9 @@ class Parser extends Printer {
                 break;
             case typescript.SyntaxKind.PlusToken:
                 printer.write('+');
+                break;
+            case typescript.SyntaxKind.PlusPlusToken:
+                printer.write('++');
                 break;
             case typescript.SyntaxKind.PlusEqualsToken:
                 printer.write('+=');
@@ -1461,16 +1622,16 @@ class Parser extends Printer {
         }
     }
 
-    BinaryValuue(astNode, printer) {
-        switch (astNode.kind) {
-            case typescript.SyntaxKind.PropertyAccessExpression:
-                this.PropertyAccessExpression(astNode, printer);
-                break;
-            case typescript.SyntaxKind.Identifier:
-                this.Identifier(astNode, printer);
-                break;
-        }
-    }
+    // BinaryValue(astNode, printer) {
+    //     switch (astNode.kind) {
+    //         case typescript.SyntaxKind.PropertyAccessExpression:
+    //             this.PropertyAccessExpression(astNode, printer);
+    //             break;
+    //         case typescript.SyntaxKind.Identifier:
+    //             this.Identifier(astNode, printer);
+    //             break;
+    //     }
+    // }
 
     ConditionalExpression(astNode, printer) {
     }
@@ -1587,6 +1748,7 @@ class Parser extends Printer {
                     break;
 
             }
+            printer.write('\0;');
         }
     }
 
@@ -1657,25 +1819,40 @@ class Parser extends Printer {
     VariableDeclaration(astNode, printer) {
         const variableIdentifier = new VariableIdentifier(printer.level);
         astNode.eval = variableIdentifier;
-        printer.write(variableIdentifier);
 
         variableIdentifier.module = this.classFullName;
 
-        const fieldName = astNode.name.escapedText;
+        let fieldName = astNode.name.escapedText;
 
         let defaultType = canUseVarKeyword ? 'var' : 'Object';
+        let hasEndSymbol = false;
+
         // accessor
         const astParent = astNode.parent.parent;
         if (isTopNode(astParent)) {
             variableIdentifier.accessor = 'private';
             const modifiers = astParent.modifiers;
-            if (modifiers && modifiers[0].kind === typescript.SyntaxKind.ExportKeyword) {
-                variableIdentifier.accessor = 'public';
-                variableIdentifier.isStatic = true;
+            if (modifiers) {
+                for (const modifier of modifiers) {
+                    switch (modifier.kind) {
+                        case typescript.SyntaxKind.ExportKeyword:
+                            variableIdentifier.accessor = 'public';
+                            variableIdentifier.isStatic = true;
+                            this.exports[fieldName] = variableIdentifier;
+                            break;
+                        case typescript.SyntaxKind.DefaultKeyword:
+                            fieldName = this.className;
+                            break;
+                    }
+                }
             }
-            this.exports[fieldName] = variableIdentifier;
             defaultType = 'Object';
+            hasEndSymbol = true;
+            this.root.write(variableIdentifier);
+        } else {
+            printer.write(variableIdentifier);
         }
+
 
         // modifierFlags
         if (astNode.parent.flags == typescript.NodeFlags.Const) {
@@ -1689,27 +1866,12 @@ class Parser extends Printer {
         // name
         variableIdentifier.identifier = fieldName;
         // initializer
-        let typeInference = null;
         const initializer = astNode.initializer;
-        if (initializer) {
-            variableIdentifier.write(' =');
-            typeInference = this.EvalValue(initializer, variableIdentifier);
+        this.EvalAssignValue(initializer, variableIdentifier, defaultType);
+
+        if (hasEndSymbol) {
+            variableIdentifier.write('\0;');
         }
-        let type = defaultType;
-        if (variableIdentifier.rawType) {
-            type = variableIdentifier.rawType;
-        } else if (typeInference) {
-            type = typeInference;
-            const initializerEval = initializer.eval;
-            if (initializerEval instanceof FunctionIdentifier || initializerEval instanceof LambdaIdentifier) {
-                const functionInterface = initializerEval.functionInterface;
-                const functionType = functionInterface.type;
-                javaContext.functionInterface.set(functionType, functionInterface);
-                this.addImport(`${config.java.package}.FunctionInterface.${functionType}`);
-            }
-        }
-        variableIdentifier.type = type;
-        printer.write('\0;');
     }
 
     VariableDeclarationList(astNode, printer) {
@@ -1721,47 +1883,70 @@ class Parser extends Printer {
     FunctionDeclaration(astNode, printer) {
         const functionIdentifier = new FunctionIdentifier(printer.level);
         astNode.eval = functionIdentifier;
-        printer.write(functionIdentifier);
 
         functionIdentifier.module = this.classFullName;
 
-        const methodName = astNode.name.escapedText;
+        // methodName
+        let methodName = astNode.name.escapedText;
+
 
         // accessor
         if (isTopNode(astNode)) {
+            astNode.isTop = true;
             functionIdentifier.accessor = 'private';
             const modifiers = astNode.modifiers;
-            if (modifiers && modifiers[0].kind === typescript.SyntaxKind.ExportKeyword) {
-                functionIdentifier.accessor = 'public';
-                functionIdentifier.isStatic = true;
+            if (modifiers) {
+                for (const modifier of modifiers) {
+                    switch (modifier.kind) {
+                        case typescript.SyntaxKind.ExportKeyword:
+                            functionIdentifier.accessor = 'public';
+                            functionIdentifier.isStatic = true;
+                            this.exports[methodName] = functionIdentifier;
+                            break;
+                        case typescript.SyntaxKind.DefaultKeyword:
+                            methodName = this.className;
+                            break;
+                    }
+                }
             }
-            this.exports[methodName] = functionIdentifier;
+            this.root.write(functionIdentifier);
+        } else {
+            printer.write(functionIdentifier);
         }
+
+        functionIdentifier.identifier = methodName;
+
         // returnType
         const returnType = this.EvalReturnType(astNode.type);
         functionIdentifier.returnType = returnType.expression;
         functionIdentifier.returnTypeModule = returnType.module;
-        // methodName
-        functionIdentifier.identifier = methodName;
+
         // parameter
         this.FunctionParameter(astNode, functionIdentifier);
         // function body
-        functionIdentifier.write('{');
+        functionIdentifier.write(' {');
         functionIdentifier.enterClosure();
         this.Block(astNode.body, functionIdentifier);
         functionIdentifier.exitClosure();
         functionIdentifier.writeln('}');
+
     }
 
     ClassDeclaration(astNode, printer) {
         const className = astNode.name.escapedText;
         if (isTopNode(astNode) && this.className === className) {
-            this.ClassMember(astNode.members, printer);
+            astNode.eval = this.root;
+            astNode.isTop = true;
+            this.ClassMember(astNode.members, this.root);
             return;
         }
         const classIdentifier = new ClassIdentifier(printer.level);
         astNode.eval = classIdentifier;
         printer.write(classIdentifier);
+
+        if (isTopNode(astNode)) {
+            this.exports[className] = classIdentifier;
+        }
 
         classIdentifier.module = this.classFullName;
 
@@ -1772,19 +1957,18 @@ class Parser extends Printer {
             switch (modifier.kind) {
                 case typescript.SyntaxKind.ExportKeyword:
                     classIdentifier.accessor = 'public';
+                    classIdentifier.isStatic = true;
                     break;
                 case typescript.SyntaxKind.DefaultKeyword:
-                    classIdentifier.isStatic = true;
+                    //classIdentifier.isStatic = true;
                     break;
             }
         }
 
-        classIdentifier.write(' {');
         classIdentifier.enterClosure();
         classIdentifier.writeln();
-        this.ClassMember(astNode.members, printer);
+        this.ClassMember(astNode.members, classIdentifier);
         classIdentifier.exitClosure();
-        classIdentifier.writeln('\0}');
     }
 
     ClassMember(members, printer) {
@@ -1834,6 +2018,9 @@ class Parser extends Printer {
     ImportDeclaration(astNode, printer) {
         const moduleSpecifier = astNode.moduleSpecifier.text;
         const resolvePath = this.pluginObject.resolveId(moduleSpecifier, this.fileName);
+        if (!resolvePath) {
+            return;
+        }
         const moduleFullName = toFullClassName(resolvePath);
 
         let moduleName = toModuleName(moduleFullName);
@@ -2221,11 +2408,27 @@ class Parser extends Printer {
 class JavaIdentifier extends Printer {
     module;
     identifier;
-    type;
+    #type;
     // 260 Variable, 262 Function, 263 Class, 264 Interface, 267 Module
     kind;
 
-    get expression() {
+    set type(val) {
+        this.#type = val;
+    }
+
+    get type() {
+        return this.#type;
+    }
+
+    assign(module = null) {
+        return this.expression(module);
+    }
+
+    call(module = null) {
+        return this.expression(module);
+    }
+
+    expression(module = null) {
         return this.identifier;
     }
 
@@ -2244,13 +2447,22 @@ class FunctionIdentifier extends JavaIdentifier {
     parameters = '';
 
     functionInterface;
+
     constructor(level) {
         super(level);
         this.kind = typescript.SyntaxKind.FunctionDeclaration;
     }
 
-    get expression() {
-        return `${toModuleName(this.module)}::${this.identifier}`;
+    assign(module = null) {
+        let moduleName = toModuleName(this.module);
+        if (module == null || module.classFullName === this.module || module.tryImport(this.module)) {
+            return `${moduleName}::${this.identifier}`;
+        }
+        return `${this.module}::${this.identifier}`;
+    }
+
+    expression(module = null) {
+        return `${toModuleName(this.module)}.${this.identifier}`;
     }
 
     toString() {
@@ -2265,10 +2477,11 @@ class FunctionIdentifier extends JavaIdentifier {
             code += 'final ';
         }
         let returnType = this.returnType;
-        if (returnType instanceof JavaIdentifier) {
-            returnType = returnType.type;
+        if (typeof (returnType) === 'function') {
+            returnType = returnType();
         }
-        code += `${returnType} ${this.identifier}(${this.parameters})${super.toString()}`;
+
+        code += `${returnType} ${this.identifier}(${this.parameters.toString()})${super.toString()}`;
         return code;
     }
 }
@@ -2280,13 +2493,10 @@ class LambdaIdentifier extends JavaIdentifier {
     parameters = '';
 
     functionInterface;
+
     constructor(level) {
         super(level);
         this.kind = typescript.SyntaxKind.FunctionDeclaration;
-    }
-
-    get expression() {
-        return this.toString();
     }
 
     toString() {
@@ -2326,12 +2536,44 @@ class VariableIdentifier extends JavaIdentifier {
     accessor = null;// private | public
     isStatic = false;
     isFinal = false;
+    isFunction = false;// null | false | true
 
     rawType = '';
 
     constructor(level) {
         super(level);
         this.kind = typescript.SyntaxKind.VariableDeclaration;
+    }
+
+    call(module = null) {
+        if (this.isFunction === null) {
+            return () => {
+                if (this.isFunction === true) {
+                    return this.expression(module) + '.call';
+                }
+                return this.expression(module);
+            }
+        } else if (this.isFunction === true) {
+            return this.expression(module) + '.call';
+        }
+        return this.expression(module);
+    }
+
+    expression(module = null) {
+        let moduleName = toModuleName(this.module);
+        if (module == null || module.classFullName === this.module) {
+            // use local module
+            return this.identifier;
+        }
+        let pre = this.module;
+        if (module.tryImport(this.module)) {
+            pre = moduleName;
+        }
+        if (this.identifier === moduleName) {
+            return pre;
+        } else {
+            return `${pre}.${this.identifier}`;
+        }
     }
 
     toString() {
@@ -2356,14 +2598,25 @@ class VariableIdentifier extends JavaIdentifier {
     }
 }
 
+class Block extends Printer {
+
+    constructor(level) {
+        super(level + 1);
+    }
+}
+
 class ClassIdentifier extends JavaIdentifier {
     accessor = null;// private | public
     isStatic = false;
 
     modifier = null;// final
+
+    staticBlock;
+
     constructor(level) {
         super(level);
         this.kind = typescript.SyntaxKind.ClassDeclaration;
+        this.staticBlock = new Block(level);
     }
 
     toString() {
@@ -2377,7 +2630,11 @@ class ClassIdentifier extends JavaIdentifier {
         if (this.modifier) {
             code += this.modifier + ' ';
         }
-        code += `class ${this.identifier}${super.toString()}`;
+        let staticCode = '';
+        if (!this.staticBlock.isEmpty) {
+            staticCode = `\n${this.indent}static {\n${this.staticBlock.indent}${this.staticBlock.toString()}\n${this.indent}}`;
+        }
+        code += `class ${this.identifier} {${staticCode}\n${this.indent}${super.toString()}\n${this.indent}}`;
         return code;
     }
 }
@@ -2392,32 +2649,21 @@ class InterfaceIdentifier extends JavaIdentifier {
 
 
 class ImportIdentifier extends JavaIdentifier {
-    isFull = false;
 
     get type() {
         return this.declaration.type;
     }
 
-    get kind() {
-        return this.declaration.kind;
+    assign(module = null) {
+        return this.declaration.assign(module);
     }
 
-    get expression() {
-        let code = this.isFull ? this.module : toModuleName(this.module);
-        const declaration = this.declaration;
-        switch (declaration.kind) {
-            case typescript.SyntaxKind.FunctionDeclaration:
-                code += '::' + this.identifier;
-                break;
-            case typescript.SyntaxKind.ModuleDeclaration:
-                code += '';
-                break;
-            case typescript.SyntaxKind.VariableDeclaration:
-            case typescript.SyntaxKind.ClassDeclaration:
-                code += '.' + this.identifier;
-                break;
-        }
-        return code;
+    call(module = null) {
+        return this.declaration.call(module);
+    }
+
+    expression(module = null) {
+        return this.declaration.expression(module);
     }
 
     get declaration() {
@@ -2441,7 +2687,25 @@ class JavaModule {
     // export identifier: <identifier, JavaIdentifier>
     exports = {};
 
+    root = new ClassIdentifier(0);
+
     #parser;
+
+    tryImport(classFullName) {
+        const moduleName = toModuleName(classFullName);
+        const modulePackage = toModulePackage(classFullName);
+
+        if (moduleName === this.packageName) return true;
+
+        let conflict = false;
+        for (let item of this.imports) {
+            if (moduleName === toModuleName(item)) {
+                conflict = true;
+                break;
+            }
+        }
+        return conflict;
+    }
 
     addImport(classFullName) {
         const moduleName = toModuleName(classFullName);
@@ -2449,10 +2713,8 @@ class JavaModule {
 
         if (moduleName === this.packageName) return true;
 
-        let hasLoad = false;
         let conflict = false;
         for (let item of this.imports) {
-            if (item === classFullName) hasLoad = true;
             if (moduleName === toModuleName(item)) {
                 conflict = true;
                 break;
@@ -2461,7 +2723,6 @@ class JavaModule {
         if (!conflict) {
             this.imports.push(classFullName);
         }
-        return hasLoad;
     }
 
     outputFile() {
@@ -2495,13 +2756,24 @@ class JavaFunctionInterface {
     #type = null;
     get type() {
         if (this.#type) return this.#type;
-        let code = 'Function';
-        for (let parameter of this.parameters) {
-            code += parameter.replace('...', 'Dot');
+
+        function _type() {
+            let code = 'Function';
+            for (let parameter of this.parameters) {
+                code += parameter.replace('...', 'Dot');
+            }
+            code += `Return${toClassName(this.returnType)}`;
+            this.#type = code;
+            return this.#type;
         }
-        code += `Return${toClassName(this.returnType)}`;
-        this.#type = code;
-        return this.#type;
+
+        if (typeof (this.returnType) === 'function' || this.parameters.some(param => typeof (param) === 'function')) {
+            return () => {
+                this.returnType = this.returnType();
+                return _type.call(this);
+            }
+        }
+        return _type.call(this);
     }
 }
 
@@ -2528,10 +2800,10 @@ export default function JavaPlugin(serviceOptions) {
     basePlugin.transform = function (contents, id) {
         const pluginContext = this;
 
-        const transpileOutput = typescript.transpileModule(contents, {
-            compilerOptions: {
-                sourceMap: true, target: typescript.ScriptTarget.Latest
-            }, fileName: id, transformers: {
+        const tsOptions = {
+            ...basePlugin.tsOptions,
+            fileName: id,
+            transformers: {
                 before: [compileContext => sourceFile => {
                     const parser = new Parser({
                         pluginContext,
@@ -2543,7 +2815,9 @@ export default function JavaPlugin(serviceOptions) {
                     return sourceFile;
                 }]
             }
-        })
+        };
+
+        const transpileOutput = typescript.transpileModule(contents, tsOptions)
 
         return {
             code: transpileOutput.outputText, //moduleSideEffects: 'no-treeshake',
@@ -2552,6 +2826,11 @@ export default function JavaPlugin(serviceOptions) {
     }
     basePlugin.buildEnd = function (error) {
         if (error) return;
+        for (let i = javaContext.modules.size - 1; i >= 0; i--) {
+            const { _, value } = javaContext.modules.at(i);
+            value.outputFile();
+        }
+
         if (javaContext.functionInterface.size) {
             const printer = new Printer();
             const basePackage = config.java.package;
@@ -2592,12 +2871,6 @@ export default function JavaPlugin(serviceOptions) {
             }
             fs.writeFileSync(path.join(outputDir, `FunctionInterface.java`), printer.toString());
         }
-
-        for (let i = javaContext.modules.size - 1; i >= 0; i--) {
-            const { _, value } = javaContext.modules.at(i);
-            value.outputFile();
-        }
-
     }
     return basePlugin;
 }

@@ -6,6 +6,16 @@ import log from "./log.js";
 
 const cwd = process.cwd();
 
+function pathExists(id) {
+    if (fs.existsSync(id)) {
+        return id;
+    }
+    id += '.ts';
+    if (fs.existsSync(id)) {
+        return id;
+    }
+}
+
 function getNodeEntry(nodePath) {
     const pkgPath = path.resolve(nodePath, 'package.json');
     const pkgInfo = JSON.parse(fs.readFileSync(pkgPath).toString());
@@ -14,8 +24,8 @@ function getNodeEntry(nodePath) {
 }
 
 function matchAbsolute(id) {
-    if (path.isAbsolute(id) && fs.existsSync(id)) {
-        return id;
+    if (path.isAbsolute(id)) {
+        return pathExists(id);
     }
 }
 
@@ -24,9 +34,7 @@ function matchRelative(id, importer) {
     if (regexp.test(id)) {
         const importerDir = path.dirname(importer);
         const relativePath = path.join(importerDir, id);
-        if (fs.existsSync(relativePath)) {
-            return relativePath;
-        }
+        return pathExists(relativePath);
     }
 }
 
@@ -35,22 +43,36 @@ function matchRootPath(id) {
     const matches = regexp.exec(id);
     if (matches) {
         const rootPath = path.join(cwd, matches[1]);
-        if (fs.existsSync(rootPath)) {
-            return rootPath;
-        }
+        return pathExists(rootPath);
     }
 }
 
 function matchNode(id) {
     const nodePath = path.join(cwd, 'node_modules', id);
-    if (fs.existsSync(nodePath)) {
+    if (pathExists(nodePath)) {
         return getNodeEntry(nodePath);
     }
 }
 
+function tsconfig(directory = cwd) {
+    let tsconfigPath = path.join(directory, 'tsconfig.json');
+    if (!fs.existsSync(tsconfigPath)) {
+        const parentPath = path.dirname(directory);
+        if (!parentPath) {
+            throw Error(`Not found tsconfig.json in ${cwd}.`);
+        }
+        return tsconfig(parentPath);
+    }
+    let text = fs.readFileSync(tsconfigPath).toString();
+    text = text.replace(/\/\*.*\*\//g, '');
+    return JSON.parse(text);
+}
+
 export default function plugin(serviceOptions) {
     return {
+        tsOptions: tsconfig(cwd),
         resolveId(id, importer) {
+            // let rawPath = id;
             const absolutePath = matchAbsolute(id);
             if (absolutePath) {
                 return absolutePath;

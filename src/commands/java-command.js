@@ -3,7 +3,7 @@ import path from "node:path";
 import { readConfig, writeConfig } from "../config.js";
 import log from "../log.js";
 import { promises } from "node:readline";
-import pkgInfo from "../pkg-info.js";
+import pkg from "../pkg.js";
 
 import { createColors } from 'picocolors';
 import Service from "../service.js";
@@ -16,7 +16,7 @@ const defaultPackage = getDefaultPackage();
 
 function getDefaultPackage() {
     let name = '';
-    const author = pkgInfo.author;
+    const author = pkg.author;
     if (author) {
         if (typeof (author) === 'string') {
             name = author;
@@ -25,9 +25,9 @@ function getDefaultPackage() {
         }
     }
     if (name.length > 0) {
-        name += '.' + pkgInfo.name;
+        name += '.' + pkg.name;
     } else {
-        name = pkgInfo.name;
+        name = pkg.name;
     }
     return name.replace(/(^\/|@)/, '').replace('/', '.');
 }

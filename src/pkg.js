@@ -8,5 +8,5 @@ function getPkgInfo() {
         return JSON.parse(fs.readFileSync(pkgPath).toString());
     }
 }
-let pkgInfo = getPkgInfo();
-export default pkgInfo;
+let pkg = getPkgInfo();
+export default pkg;

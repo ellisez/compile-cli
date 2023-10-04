@@ -1,50 +1,79 @@
-import Staff, {idStaff, newStaff as staffObject} from './entity/staff.ts';// ImportDeclaration
-import Department1 from "./entity/department.ts";// ImportDeclaration
+import ConsumerService from "./serivce/consumer_service";
+import ProduceService from "./serivce/produce_service";
+import OrderService from "./serivce/order_service";
+import {OrderItem} from "./entity/order";
+import { plus, minus, asterisk, slash, pi } from "./test/import_test";
 
-function main(...args: string[]): void {// FunctionDeclaration
-    const department: Department1 = new Department1(
-        100,
-        'IT',
-        [
-            new Staff(
-                301,
-                'adm',
-                'little pig',
-                new Date()
-            ),
-            new Staff(
-                302,
-                'beni',
-                'wow beni',
-                new Date()
-            ),
-            new Staff(
-                303,
-                'caye',
-                'new caye',
-                new Date()
-            ),
-        ]
+const consumerService = new ConsumerService();
+const productService = new ProduceService();
+const orderService = new OrderService();
+
+function testClass() {
+    console.log('1. Create a Consumer instance.');
+    const consumer = consumerService.createConsumer();
+    console.log('> ' + consumer.toString());
+
+    console.log('2. Recharge 200.');
+    consumerService.recharge(consumer, 200);
+    console.log('> balance = ' + consumer.balance);
+
+    console.log('3. Create a Product instance.');
+    const product = productService.createProduct();
+    console.log('> ' + product.toString());
+
+    console.log('4. Put 30 products on shelf.');
+    productService.onShelf(product, 30);
+    console.log('> count = ' + product.count);
+
+    console.log('5. Consumers create order of 20 products.');
+    let order = orderService.createOrder(consumer,
+        new OrderItem(product, 20),
     );
-    console.log(department);
+    console.log('> order = ' + order.toString());
+
+    console.log('6. Consumer pay order');
+    orderService.doPay(order);
+    console.log('> order = ' + order.toString());
+
+    console.log('7. Product pull off shelf.');
+    productService.offShelf(product);
+
+    try {
+        console.log('8. Consumer pay order');
+        orderService.doPay(order);
+    } catch (e) {
+        console.error('> error: ' + e.message);
+    }
+
+    console.log('9. Put products on shelf again.');
+    productService.onShelf(product);
+
+    try {
+        console.log('10. pay order for 20 products.');
+        order = orderService.createOrder(consumer,
+            new OrderItem(product, 20),
+        );
+        orderService.doPay(order);
+    } catch (e) {
+        console.error('> error: ' + e.message);
+    }
+
 }
-console.log(idStaff);
-console.log(staffObject);
-// console.log(newStaff);
-let v=2.0;
-const c=0x3;
-export default main;// ExportAssignment
-export const w = v;
 
-// export const z = function (ert = '123') {
-//     ert = '1231';
-//     return ert;
-// }
-export const z = main;
-export function ty() {
+const plusLoad = plus;
 
+const piLoad = pi;
+function testImport() {
+    let a=1;
+    let b=2;
+    console.log(plusLoad(a, b));
+    console.log(minus(a,b));
+    console.log(asterisk(a,b));
+    console.log(slash(a,b));
+    console.log(piLoad);
 }
 
-export function yyy() {
+function main(...args: string[]): void {
+    testClass();
 
 }
