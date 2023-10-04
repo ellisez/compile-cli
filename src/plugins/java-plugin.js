@@ -47,6 +47,14 @@ function toModulePackage(classFullName) {
 
 const canUseVarKeyword = versionObject('java')[0] >= 10;
 
+function callFunction(fun) {
+    if (typeof (fun) === 'function') {
+        fun = fun();
+        return callFunction(fun);
+    }
+    return fun;
+}
+
 class Printer {
     #level = 0;
     indent = '';
@@ -96,7 +104,7 @@ class Printer {
         let code = '';
         for (let line of this.#lines) {
             if (typeof (line) === 'function') {
-                line = line();
+                line = callFunction(line);
             } else {
                 line = line.toString();
             }
@@ -399,7 +407,7 @@ class Parser extends Printer {
                     if (typeof (elementType.expression) === 'function') {
                         expression = () => {
                             let elementExpression = elementType.expression ? elementType.expression : 'Object';
-                            elementExpression = elementExpression();
+                            elementExpression = callFunction(elementExpression);
                             return `${elementExpression}[]`;
                         }
                     } else {
@@ -519,7 +527,7 @@ class Parser extends Printer {
         return this.exports[identifierName];
     }
 
-    EvalExpression(astNode, printer) {
+    EvalKeyword(astNode, printer) {
         let typeInference = null;
         switch (astNode.kind) {
             case typescript.SyntaxKind.NullKeyword:
@@ -530,6 +538,12 @@ class Parser extends Printer {
                 break;
             case typescript.SyntaxKind.StringLiteral:
                 typeInference = this.StringLiteral(astNode, printer);
+                break;
+            case typescript.SyntaxKind.TrueKeyword:
+                typeInference = this.TrueKeyword(astNode, printer);
+                break;
+            case typescript.SyntaxKind.FalseKeyword:
+                typeInference = this.FalseKeyword(astNode, printer);
                 break;
             case typescript.SyntaxKind.ArrayLiteralExpression:
                 typeInference = this.ArrayLiteralExpression(astNode, printer);
@@ -552,6 +566,14 @@ class Parser extends Printer {
             case typescript.SyntaxKind.PropertyAccessExpression:
                 typeInference = this.PropertyAccessExpression(astNode, printer);
                 break;
+        }
+        return typeInference;
+    }
+
+    EvalExpression(astNode, printer) {
+        let typeInference = this.EvalKeyword(astNode, printer);
+        if (typeInference) return typeInference;
+        switch (astNode.kind) {
             case typescript.SyntaxKind.Identifier:
                 typeInference = this.Identifier(astNode, printer);
                 if (printer.isStatic) {
@@ -563,38 +585,9 @@ class Parser extends Printer {
     }
 
     EvalAssign(astNode, printer) {
-        let typeInference = null;
+        let typeInference = this.EvalKeyword(astNode, printer);
+        if (typeInference) return typeInference;
         switch (astNode.kind) {
-            case typescript.SyntaxKind.NullKeyword:
-                typeInference = this.NullKeyword(astNode, printer);
-                break;
-            case typescript.SyntaxKind.NumericLiteral:
-                typeInference = this.NumericLiteral(astNode, printer);
-                break;
-            case typescript.SyntaxKind.StringLiteral:
-                typeInference = this.StringLiteral(astNode, printer);
-                break;
-            case typescript.SyntaxKind.ArrayLiteralExpression:
-                typeInference = this.ArrayLiteralExpression(astNode, printer);
-                break;
-            case typescript.SyntaxKind.FunctionExpression:
-                typeInference = this.FunctionExpression(astNode, printer);
-                break;
-            case typescript.SyntaxKind.ArrowFunction:
-                typeInference = this.ArrowFunction(astNode, printer);
-                break;
-            case typescript.SyntaxKind.NewExpression:
-                typeInference = this.NewExpression(astNode, printer);
-                break;
-            case typescript.SyntaxKind.CallExpression:
-                typeInference = this.CallExpression(astNode, printer);
-                break;
-            case typescript.SyntaxKind.BinaryExpression:
-                typeInference = this.BinaryExpression(astNode, printer);
-                break;
-            case typescript.SyntaxKind.PropertyAccessExpression:
-                typeInference = this.PropertyAccessExpression(astNode, printer);
-                break;
             case typescript.SyntaxKind.Identifier:
                 typeInference = this.AssignIdentifier(astNode, printer);
 
@@ -607,38 +600,9 @@ class Parser extends Printer {
     }
 
     EvalCall(astNode, printer) {
-        let typeInference = null;
+        let typeInference = this.EvalKeyword(astNode, printer);
+        if (typeInference) return typeInference;
         switch (astNode.kind) {
-            case typescript.SyntaxKind.NullKeyword:
-                typeInference = this.NullKeyword(astNode, printer);
-                break;
-            case typescript.SyntaxKind.NumericLiteral:
-                typeInference = this.NumericLiteral(astNode, printer);
-                break;
-            case typescript.SyntaxKind.StringLiteral:
-                typeInference = this.StringLiteral(astNode, printer);
-                break;
-            case typescript.SyntaxKind.ArrayLiteralExpression:
-                typeInference = this.ArrayLiteralExpression(astNode, printer);
-                break;
-            case typescript.SyntaxKind.FunctionExpression:
-                typeInference = this.FunctionExpression(astNode, printer);
-                break;
-            case typescript.SyntaxKind.ArrowFunction:
-                typeInference = this.ArrowFunction(astNode, printer);
-                break;
-            case typescript.SyntaxKind.NewExpression:
-                typeInference = this.NewExpression(astNode, printer);
-                break;
-            case typescript.SyntaxKind.CallExpression:
-                typeInference = this.CallExpression(astNode, printer);
-                break;
-            case typescript.SyntaxKind.BinaryExpression:
-                typeInference = this.BinaryExpression(astNode, printer);
-                break;
-            case typescript.SyntaxKind.PropertyAccessExpression:
-                typeInference = this.PropertyAccessExpression(astNode, printer);
-                break;
             case typescript.SyntaxKind.Identifier:
                 typeInference = this.CallIdentifier(astNode, printer);
 
@@ -689,14 +653,13 @@ class Parser extends Printer {
     }
 
     EvalInitalizer(initializer, printer, defaultType = 'var') {
-        let type = defaultType;
+        const rawType = printer.rawType;
+        let type = rawType || defaultType;
         if (initializer) {
             printer.write(' =');
             let typeInference = this.EvalAssign(initializer, printer);
 
-            if (printer.rawType) {
-                type = printer.rawType;
-            } else if (typeInference) {
+            if (!rawType && typeInference) {
                 // use typeInference can trigger FunctionInterface import.
                 type = typeInference;
                 const initializerEval = initializer.eval;
@@ -1074,6 +1037,8 @@ class Parser extends Printer {
     }
 
     FalseKeyword(astNode, printer) {
+        printer.write('false');
+        return 'boolean';
     }
 
     FinallyKeyword(astNode, printer) {
@@ -1121,6 +1086,8 @@ class Parser extends Printer {
     }
 
     TrueKeyword(astNode, printer) {
+        printer.write('true');
+        return 'boolean';
     }
 
     TryKeyword(astNode, printer) {
@@ -1374,7 +1341,7 @@ class Parser extends Printer {
             newPrinter.write(() => {
                 let returnType = printer.returnType;
                 if (typeof (returnType) === 'function') {
-                    returnType = returnType();
+                    returnType = callFunction(returnType);
                 } else {
                     returnType = returnType.toString();
                 }
@@ -2674,7 +2641,7 @@ class FunctionIdentifier extends JavaIdentifier {
         }
         let returnType = this.returnType;
         if (typeof (returnType) === 'function') {
-            returnType = returnType();
+            returnType = callFunction(returnType);
         }
 
         code += `${returnType} ${this.identifier}(${this.parameters.toString()})${super.toString()}`;
@@ -2816,7 +2783,7 @@ class VariableIdentifier extends JavaIdentifier {
         }
         let type = this.type;
         if (typeof (type) === 'function') {
-            type = type();
+            type = callFunction(type);
         } else {
             type = type.toString();
         }
@@ -2996,7 +2963,7 @@ class JavaFunctionInterface {
 
         if (typeof (this.returnType) === 'function' || this.parameters.some(param => typeof (param) === 'function')) {
             return () => {
-                this.returnType = this.returnType();
+                this.returnType = callFunction(this.returnType);
                 return _type.call(this);
             }
         }
