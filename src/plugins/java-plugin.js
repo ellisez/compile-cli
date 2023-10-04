@@ -120,6 +120,12 @@ class Printer {
         }
         return code;
     }
+
+    clone() {
+        const printer = new Printer(this.level);
+        printer.#lines = [...this.#lines];
+        return printer;
+    }
 }
 
 class Parser extends Printer {
@@ -513,7 +519,7 @@ class Parser extends Printer {
         return this.exports[identifierName];
     }
 
-    EvalValue(astNode, printer) {
+    EvalExpression(astNode, printer) {
         let typeInference = null;
         switch (astNode.kind) {
             case typescript.SyntaxKind.NullKeyword:
@@ -556,6 +562,94 @@ class Parser extends Printer {
         return typeInference;
     }
 
+    EvalAssign(astNode, printer) {
+        let typeInference = null;
+        switch (astNode.kind) {
+            case typescript.SyntaxKind.NullKeyword:
+                typeInference = this.NullKeyword(astNode, printer);
+                break;
+            case typescript.SyntaxKind.NumericLiteral:
+                typeInference = this.NumericLiteral(astNode, printer);
+                break;
+            case typescript.SyntaxKind.StringLiteral:
+                typeInference = this.StringLiteral(astNode, printer);
+                break;
+            case typescript.SyntaxKind.ArrayLiteralExpression:
+                typeInference = this.ArrayLiteralExpression(astNode, printer);
+                break;
+            case typescript.SyntaxKind.FunctionExpression:
+                typeInference = this.FunctionExpression(astNode, printer);
+                break;
+            case typescript.SyntaxKind.ArrowFunction:
+                typeInference = this.ArrowFunction(astNode, printer);
+                break;
+            case typescript.SyntaxKind.NewExpression:
+                typeInference = this.NewExpression(astNode, printer);
+                break;
+            case typescript.SyntaxKind.CallExpression:
+                typeInference = this.CallExpression(astNode, printer);
+                break;
+            case typescript.SyntaxKind.BinaryExpression:
+                typeInference = this.BinaryExpression(astNode, printer);
+                break;
+            case typescript.SyntaxKind.PropertyAccessExpression:
+                typeInference = this.PropertyAccessExpression(astNode, printer);
+                break;
+            case typescript.SyntaxKind.Identifier:
+                typeInference = this.AssignIdentifier(astNode, printer);
+
+                if (printer.isStatic) {
+                    astNode.eval.isStatic = true;
+                }
+                break;
+        }
+        return typeInference;
+    }
+
+    EvalCall(astNode, printer) {
+        let typeInference = null;
+        switch (astNode.kind) {
+            case typescript.SyntaxKind.NullKeyword:
+                typeInference = this.NullKeyword(astNode, printer);
+                break;
+            case typescript.SyntaxKind.NumericLiteral:
+                typeInference = this.NumericLiteral(astNode, printer);
+                break;
+            case typescript.SyntaxKind.StringLiteral:
+                typeInference = this.StringLiteral(astNode, printer);
+                break;
+            case typescript.SyntaxKind.ArrayLiteralExpression:
+                typeInference = this.ArrayLiteralExpression(astNode, printer);
+                break;
+            case typescript.SyntaxKind.FunctionExpression:
+                typeInference = this.FunctionExpression(astNode, printer);
+                break;
+            case typescript.SyntaxKind.ArrowFunction:
+                typeInference = this.ArrowFunction(astNode, printer);
+                break;
+            case typescript.SyntaxKind.NewExpression:
+                typeInference = this.NewExpression(astNode, printer);
+                break;
+            case typescript.SyntaxKind.CallExpression:
+                typeInference = this.CallExpression(astNode, printer);
+                break;
+            case typescript.SyntaxKind.BinaryExpression:
+                typeInference = this.BinaryExpression(astNode, printer);
+                break;
+            case typescript.SyntaxKind.PropertyAccessExpression:
+                typeInference = this.PropertyAccessExpression(astNode, printer);
+                break;
+            case typescript.SyntaxKind.Identifier:
+                typeInference = this.CallIdentifier(astNode, printer);
+
+                if (printer.isStatic) {
+                    astNode.eval.isStatic = true;
+                }
+                break;
+        }
+        return typeInference;
+    }
+
     EvalMultiValue(elements, printer, multiLine) {
         if (!elements) return;
         let hasMultiLine = false;
@@ -572,7 +666,7 @@ class Parser extends Printer {
                     printer.write('\0, ');
                 }
                 printer.writeln();
-                itemTypeInference = this.EvalValue(element, printer);
+                itemTypeInference = this.EvalExpression(element, printer);
                 printer.exitClosure();
             } else {
                 if (i !== 0) {
@@ -580,7 +674,7 @@ class Parser extends Printer {
                 }
                 let element = elements[i];
                 printer.write('\0');
-                itemTypeInference = this.EvalValue(element, printer);
+                itemTypeInference = this.EvalExpression(element, printer);
             }
             if (!typeInference) {
                 typeInference = itemTypeInference;
@@ -594,11 +688,11 @@ class Parser extends Printer {
         return typeInference + '[]';
     }
 
-    EvalAssignValue(initializer, printer, defaultType = 'var') {
+    EvalInitalizer(initializer, printer, defaultType = 'var') {
         let type = defaultType;
         if (initializer) {
             printer.write(' =');
-            let typeInference = this.EvalValue(initializer, printer);
+            let typeInference = this.EvalAssign(initializer, printer);
 
             if (printer.rawType) {
                 type = printer.rawType;
@@ -880,6 +974,42 @@ class Parser extends Printer {
     CaretEqualsToken(astNode, printer) {
     }
 
+    CallIdentifier(astNode, printer) {
+        const identifierName = astNode.escapedText;
+        const identifierObject = this.EvalIdentifier(astNode.parent, identifierName);
+        if (!identifierObject) {
+            this.pluginContext.error(`Unknown ${identifierName}`, astNode.pos);
+        }
+        astNode.eval = identifierObject;
+
+        /// call
+        if (identifierObject instanceof ImportIdentifier) {
+            printer.write(() => identifierObject.call(this.javaModule));
+            return () => identifierObject.type;
+        } else {
+            printer.write(identifierObject.call(this.javaModule));
+            return identifierObject.type;
+        }
+    }
+
+    AssignIdentifier(astNode, printer) {
+        const identifierName = astNode.escapedText;
+        const identifierObject = this.EvalIdentifier(astNode.parent, identifierName);
+        if (!identifierObject) {
+            this.pluginContext.error(`Unknown ${identifierName}`, astNode.pos);
+        }
+        astNode.eval = identifierObject;
+
+        /// assign
+        if (identifierObject instanceof ImportIdentifier) {
+            printer.write(() => identifierObject.assign(this.javaModule));
+            return () => identifierObject.type;
+        } else {
+            printer.write(identifierObject.assign(this.javaModule));
+            return identifierObject.type;
+        }
+    }
+
     Identifier(astNode, printer) {
         const identifierName = astNode.escapedText;
         const identifierObject = this.EvalIdentifier(astNode.parent, identifierName);
@@ -888,36 +1018,12 @@ class Parser extends Printer {
         }
         astNode.eval = identifierObject;
 
-        switch (astNode.parent.kind) {
-            /// declaration
-            case typescript.SyntaxKind.FunctionDeclaration:
-            case typescript.SyntaxKind.VariableDeclaration:
-            case typescript.SyntaxKind.PropertyDeclaration:
-                if (identifierObject instanceof ImportIdentifier) {
-                    printer.write(() => identifierObject.assign(this.javaModule));
-                } else {
-                    printer.write(identifierObject.assign(this.javaModule));
-                }
-                break;
-            case typescript.SyntaxKind.CallExpression:
-                /// call
-                if (identifierObject instanceof ImportIdentifier) {
-                    printer.write(() => identifierObject.call(this.javaModule));
-                } else {
-                    printer.write(identifierObject.call(this.javaModule));
-                }
-                break;
-            default:
-                /// ref
-                if (identifierObject instanceof ImportIdentifier) {
-                    printer.write(() => identifierObject.expression(this.javaModule));
-                } else {
-                    printer.write(identifierObject.expression(this.javaModule));
-                }
-        }
+        /// expression
         if (identifierObject instanceof ImportIdentifier) {
+            printer.write(() => identifierObject.expression(this.javaModule));
             return () => identifierObject.type;
         } else {
+            printer.write(identifierObject.expression(this.javaModule));
             return identifierObject.type;
         }
     }
@@ -1196,24 +1302,92 @@ class Parser extends Printer {
         const paramPrinter = new Printer(printer.level);
         printer.parameters = paramPrinter;
 
+        const overrideParams = [];
+        let overrideIndex = -1;
         paramPrinter.write('\0');
         for (let i = 0; i < parameters.length; i++) {
             let parameter = parameters[i];
             if (i !== 0) {
                 paramPrinter.write(',');
             }
+
             const parameterObject = this.EvalParameterType(parameter, paramPrinter);
-            paramPrinter.write(parameterObject.type);
-            paramPrinter.write(parameterObject.name);
-            functionInterface.parameters.push(parameterObject.type);
+            const type = parameterObject.type;
+            const name = parameterObject.name;
+            paramPrinter.write(type);
+            paramPrinter.write(name);
+
+            const data = { type, name };
+
+            functionInterface.parameters.push(type);
             if (parameterObject.module) {
                 functionInterface.imports.add(parameterObject.module);
             }
+
+            const initializer = parameter.initializer;
+            if (initializer) {
+                data.default = new Printer(printer.level);
+                this.EvalAssign(initializer, data.default);
+                if (overrideIndex < 0) overrideIndex = i;
+            } else {
+                overrideIndex = -1;
+            }
+            overrideParams.push(data);
         }
 
         printer.functionInterface = functionInterface;
         const functionType = functionInterface.type;
         printer.type = functionType;
+        /// support default parameter
+        this.OverrideFunctionDeclaration(astNode, overrideParams, printer, overrideIndex);
+    }
+
+    OverrideFunctionDeclaration(astNode, overrideParams, printer, index) {
+        if (index < 0) return;
+        for (let i = index; i < overrideParams.length; i++) {
+            const newPrinter = printer.clone();
+            const parentPrinter = astNode.parent.eval;
+            parentPrinter.writeln(newPrinter);
+
+            const paramPrinter = new Printer(printer.level);
+            newPrinter.parameters = paramPrinter;
+
+            const callParams = [];
+            for (let j = 0; j < i; j++) {
+                let overrideParam = overrideParams[j];
+
+                if (j !== 0) {
+                    paramPrinter.write(',');
+                }
+
+                const { name, type, default: value } = overrideParam;
+                paramPrinter.write(type);
+                paramPrinter.write(name);
+
+                callParams.push(value || name);
+            }
+            callParams.push(overrideParams[i].default);
+            /// bodyCode
+            newPrinter.write(' {');
+            newPrinter.enterClosure();
+            newPrinter.writeln();
+            newPrinter.write(() => {
+                let returnType = printer.returnType;
+                if (typeof (returnType) === 'function') {
+                    returnType = returnType();
+                } else {
+                    returnType = returnType.toString();
+                }
+                if (returnType === 'void') return '\0';
+                return 'return';
+            })
+            newPrinter.write(`this.${newPrinter.identifier}(`);
+            newPrinter.write('\0');
+            newPrinter.write(() => callParams.join(', '));
+            newPrinter.write('\0);');
+            newPrinter.exitClosure();
+            newPrinter.writeln('}');
+        }
     }
 
     ConstructorParameter(astNode, printer) {
@@ -1282,7 +1456,7 @@ class Parser extends Printer {
         // initializer
         const defaultType = 'Object';
         const initializer = astNode.initializer;
-        this.EvalAssignValue(initializer, variableIdentifier, defaultType);
+        this.EvalInitalizer(initializer, variableIdentifier, defaultType);
 
         variableIdentifier.write('\0;');
     }
@@ -1510,7 +1684,7 @@ class Parser extends Printer {
                 this.PropertyAccessExpression(expression, printer);
                 break;
             case typescript.SyntaxKind.Identifier:
-                this.Identifier(expression, printer);
+                this.CallIdentifier(expression, printer);
         }
         printer.write('\0(');
         this.EvalMultiValue(argumentsList, printer);
@@ -1586,9 +1760,9 @@ class Parser extends Printer {
     }
 
     BinaryExpression(astNode, printer) {
-        this.EvalValue(astNode.left, printer);
+        this.EvalExpression(astNode.left, printer);
         this.BinaryOperation(astNode.operatorToken, printer);
-        this.EvalValue(astNode.right, printer);
+        this.EvalExpression(astNode.right, printer);
     }
 
     BinaryOperation(astNode, printer) {
@@ -1867,7 +2041,7 @@ class Parser extends Printer {
         variableIdentifier.identifier = fieldName;
         // initializer
         const initializer = astNode.initializer;
-        this.EvalAssignValue(initializer, variableIdentifier, defaultType);
+        this.EvalInitalizer(initializer, variableIdentifier, defaultType);
 
         if (hasEndSymbol) {
             variableIdentifier.write('\0;');
@@ -2455,14 +2629,36 @@ class FunctionIdentifier extends JavaIdentifier {
 
     assign(module = null) {
         let moduleName = toModuleName(this.module);
-        if (module == null || module.classFullName === this.module || module.tryImport(this.module)) {
-            return `${moduleName}::${this.identifier}`;
+        if (module == null || module.classFullName === this.module) {
+            // use local module
+            return this.identifier;
         }
-        return `${this.module}::${this.identifier}`;
+        let pre = this.module;
+        if (module.tryImport(this.module)) {
+            pre = moduleName;
+        }
+        if (this.identifier === moduleName) {
+            return pre;
+        } else {
+            return `${pre}::${this.identifier}`;
+        }
     }
 
     expression(module = null) {
-        return `${toModuleName(this.module)}.${this.identifier}`;
+        let moduleName = toModuleName(this.module);
+        if (module == null || module.classFullName === this.module) {
+            // use local module
+            return this.identifier;
+        }
+        let pre = this.module;
+        if (module.tryImport(this.module)) {
+            pre = moduleName;
+        }
+        if (this.identifier === moduleName) {
+            return pre;
+        } else {
+            return `${pre}.${this.identifier}`;
+        }
     }
 
     toString() {
@@ -2484,6 +2680,23 @@ class FunctionIdentifier extends JavaIdentifier {
         code += `${returnType} ${this.identifier}(${this.parameters.toString()})${super.toString()}`;
         return code;
     }
+
+    clone() {
+        const functionIdentifier = new FunctionIdentifier(this.level);
+        functionIdentifier.identifier = this.identifier;
+        functionIdentifier.module = this.module;
+        functionIdentifier.type = this.type;
+        functionIdentifier.kind = this.kind;
+
+        functionIdentifier.accessor = this.accessor;
+        functionIdentifier.isFinal = this.isFinal;
+        functionIdentifier.isStatic = this.isStatic;
+        functionIdentifier.returnType = this.returnType;
+        functionIdentifier.returnTypeModule = this.returnTypeModule;
+        functionIdentifier.parameters = this.parameters;
+        functionIdentifier.functionInterface = this.functionInterface;
+        return functionIdentifier;
+    }
 }
 
 class LambdaIdentifier extends JavaIdentifier {
@@ -2501,6 +2714,20 @@ class LambdaIdentifier extends JavaIdentifier {
 
     toString() {
         return `(${this.parameters}) -> ${super.toString()}`;
+    }
+
+    clone() {
+        const lambdaIdentifier = new LambdaIdentifier(this.level);
+        lambdaIdentifier.identifier = this.identifier;
+        lambdaIdentifier.module = this.module;
+        lambdaIdentifier.type = this.type;
+        lambdaIdentifier.kind = this.kind;
+
+        lambdaIdentifier.returnType = this.returnType;
+        lambdaIdentifier.returnTypeModule = this.returnTypeModule;
+        lambdaIdentifier.parameters = this.parameters;
+        lambdaIdentifier.functionInterface = this.functionInterface;
+        return lambdaIdentifier;
     }
 }
 

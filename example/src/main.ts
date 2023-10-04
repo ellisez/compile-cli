@@ -75,5 +75,5 @@ function testImport() {
 
 function main(...args: string[]): void {
     testClass();
-
+    testImport();
 }
