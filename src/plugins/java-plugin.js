@@ -503,10 +503,7 @@ class Parser extends Printer {
 
     EvalIdentifier(astNode, identifierName) {
         if (identifierName === this.className) {
-            return {
-                identifier: identifierName,
-                module: this.classFullName,
-            }
+            return this.root;
         }
         const locals = astNode.locals;
         const isTop = astNode.kind === typescript.SyntaxKind.SourceFile;
@@ -565,6 +562,12 @@ class Parser extends Printer {
                 break;
             case typescript.SyntaxKind.PropertyAccessExpression:
                 typeInference = this.PropertyAccessExpression(astNode, printer);
+                break;
+            case typescript.SyntaxKind.PrefixUnaryExpression:
+                typeInference = this.PrefixUnaryExpression(astNode, printer);
+                break;
+            case typescript.SyntaxKind.PostfixUnaryExpression:
+                typeInference = this.PostfixUnaryExpression(astNode, printer);
                 break;
         }
         return typeInference;
@@ -1633,6 +1636,9 @@ class Parser extends Printer {
                 case typescript.SyntaxKind.ThisKeyword:
                     printer.write('this');
                     break;
+                case typescript.SyntaxKind.PropertyAccessExpression:
+                    this.PropertyAccessExpression(expression, printer);
+                    break;
             }
             printer.write(`\0.${name}`);
         } else {
@@ -1721,9 +1727,29 @@ class Parser extends Printer {
     }
 
     PrefixUnaryExpression(astNode, printer) {
+        switch (astNode.operator) {
+            case typescript.SyntaxKind.PlusPlusToken:
+                printer.write('++');
+                break;
+            case typescript.SyntaxKind.MinusMinusToken:
+                printer.write('--');
+                break;
+        }
+        printer.write('\0');
+        return this.EvalExpression(astNode.operand, printer);
     }
 
     PostfixUnaryExpression(astNode, printer) {
+        this.EvalExpression(astNode.operand, printer);
+        printer.write('\0');
+        switch (astNode.operator) {
+            case typescript.SyntaxKind.PlusPlusToken:
+                printer.write('++');
+                break;
+            case typescript.SyntaxKind.MinusMinusToken:
+                printer.write('--');
+                break;
+        }
     }
 
     BinaryExpression(astNode, printer) {
@@ -1937,6 +1963,8 @@ class Parser extends Printer {
     }
 
     ReturnStatement(astNode, printer) {
+        printer.write('return');
+        this.EvalExpression(astNode.expression, printer);
     }
 
     WithStatement(astNode, printer) {
