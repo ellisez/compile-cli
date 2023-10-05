@@ -432,44 +432,45 @@ class Parser extends Printer {
 
     EvalParameterType(astNode, printer) {
         const typeNode = astNode.type;
-        let rawType = 'Object';
         let type = 'Object';
         let module = null;
+
+        function arrayType(elementExpression) {
+            if (astNode.dotDotDotToken) {
+                return elementExpression || 'Object';
+            } else {
+                elementExpression = elementExpression ? elementExpression : 'Object';
+                return `${elementExpression}[]`;
+            }
+        }
+
         if (typeNode) {
             switch (typeNode.kind) {
                 case typescript.SyntaxKind.TypeReference:
-                    rawType = typeNode.typeName.escapedText;
-                    const typeReference = this.EvalTypeReference(astNode, rawType);
+                    type = typeNode.typeName.escapedText;
+                    const typeReference = this.EvalTypeReference(astNode, type);
                     module = typeReference.module;
                     type = typeReference.expression;
                     break;
                 case typescript.SyntaxKind.StringKeyword:
-                    rawType = 'String';
-                    type = rawType;
+                    type = 'String';
                     break;
                 case typescript.SyntaxKind.NumberKeyword:
-                    rawType = 'Number';
-                    type = rawType;
+                    type = 'Number';
                     break;
                 case typescript.SyntaxKind.BooleanKeyword:
-                    rawType = 'Boolean';
-                    type = rawType;
+                    type = 'Boolean';
                     break;
                 case typescript.SyntaxKind.ArrayType:
-                    let elementType = this.EvalJavaType(typeNode.elementType).expression;
-                    if (astNode.dotDotDotToken) {
-                        rawType = elementType || 'Object';
-                        type = `${rawType}...`;
-                        break;
+                    let elementType = this.EvalJavaType(typeNode.elementType);
+                    module = elementType.module;
+                    let elementExpression = elementType.expression;
+
+                    if (typeof (elementExpression) === 'function') {
+                        type = () => arrayType(elementExpression);
                     } else {
-                        elementType = elementType ? elementType : 'Object';
-                        rawType = `${elementType}[]`;
-                        type = rawType;
-                        break;
+                        type = arrayType(elementExpression);
                     }
-                case typescript.SyntaxKind.TypeReference:
-                    rawType = typeNode.escapedText;
-                    type = rawType;
                     break;
                 case typescript.SyntaxKind.ObjectKeyword:
                 case typescript.SyntaxKind.TupleType:
@@ -483,7 +484,6 @@ class Parser extends Printer {
         astNode.eval = variableIdentifier;
         return {
             type,
-            rawType,
             dotDotDot: astNode.dotDotDotToken != null,
             name,
             module
@@ -2643,7 +2643,6 @@ class FunctionIdentifier extends JavaIdentifier {
         if (typeof (returnType) === 'function') {
             returnType = callFunction(returnType);
         }
-
         code += `${returnType} ${this.identifier}(${this.parameters.toString()})${super.toString()}`;
         return code;
     }
@@ -2811,6 +2810,23 @@ class ClassIdentifier extends JavaIdentifier {
         super(level);
         this.kind = typescript.SyntaxKind.ClassDeclaration;
         this.staticBlock = new Block(level);
+    }
+
+    expression(module = null) {
+        let moduleName = toModuleName(this.module);
+        if (module == null || module.classFullName === this.module) {
+            // use local module
+            return this.identifier;
+        }
+        let pre = this.module;
+        if (module.tryImport(this.module)) {
+            pre = moduleName;
+        }
+        if (this.identifier === moduleName) {
+            return pre;
+        } else {
+            return `${pre}.${this.identifier}`;
+        }
     }
 
     toString() {
