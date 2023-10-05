@@ -1479,11 +1479,7 @@ class Parser extends Printer {
 
         this.FunctionParameter(astNode, functionIdentifier);
 
-        functionIdentifier.write(' {');
-        functionIdentifier.enterClosure();
         this.Block(astNode.body, functionIdentifier);
-        functionIdentifier.exitClosure();
-        functionIdentifier.writeln('}');
     }
 
     ClassStaticBlockDeclaration(astNode, printer) {
@@ -1507,11 +1503,7 @@ class Parser extends Printer {
         this.ConstructorParameter(astNode, constructorIdentifier);
 
         // body
-        constructorIdentifier.write('{');
-        constructorIdentifier.enterClosure();
         this.Block(astNode.body, constructorIdentifier);
-        constructorIdentifier.exitClosure();
-        constructorIdentifier.writeln('\0}');
     }
 
     GetAccessor(astNode, printer) {
@@ -1784,6 +1776,21 @@ class Parser extends Printer {
             case typescript.SyntaxKind.SlashToken:
                 printer.write('/');
                 break;
+            case typescript.SyntaxKind.EqualsEqualsToken:
+                printer.write('==');
+                break;
+            case typescript.SyntaxKind.EqualsEqualsEqualsToken:
+                printer.write('===');
+                break;
+            case typescript.SyntaxKind.ExclamationToken:
+                printer.write('!');
+                break;
+            case typescript.SyntaxKind.ExclamationEqualsToken:
+                printer.write('!=');
+                break;
+            case typescript.SyntaxKind.ExclamationEqualsEqualsToken:
+                printer.write('!==');
+                break;
             default:
 
         }
@@ -1842,10 +1849,19 @@ class Parser extends Printer {
     SemicolonClassElement(astNode, printer) {
     }
 
-    Block(astNode, printer) {
+    Statements(astNode, printer) {
         const statements = astNode.statements;
+        const multiLine = astNode.multiLine;
+        if (multiLine) {
+            printer.write('\0 {');
+            printer.enterClosure();
+        }
         for (const statement of statements) {
-            printer.writeln();
+            let endSymbol = false;
+            if (multiLine) {
+                endSymbol = true;
+                printer.writeln();
+            }
             switch (statement.kind) {
                 case typescript.SyntaxKind.FirstStatement:
                     this.FirstStatement(statement, printer);
@@ -1856,12 +1872,16 @@ class Parser extends Printer {
                     break;
                 /// function declaration
                 case typescript.SyntaxKind.FunctionDeclaration:
-                    printer.writeln();
+                    if (multiLine) {
+                        printer.writeln();
+                    }
                     this.FunctionDeclaration(statement, printer);
                     break;
                 /// class declaration
                 case typescript.SyntaxKind.ClassDeclaration:
-                    printer.writeln();
+                    if (multiLine) {
+                        printer.writeln();
+                    }
                     this.ClassDeclaration(statement, printer);
                     break;
                 /// call / new / operator
@@ -1870,22 +1890,28 @@ class Parser extends Printer {
                     break;
                 /// if / else if / else
                 case typescript.SyntaxKind.IfStatement:
+                    endSymbol = false;
                     this.IfStatement(statement, printer);
                     break;
                 /// for / do-while / while / break / continue
                 case typescript.SyntaxKind.DoStatement:
+                    endSymbol = false;
                     this.DoStatement(statement, printer);
                     break;
                 case typescript.SyntaxKind.WhileStatement:
+                    endSymbol = false;
                     this.WhileStatement(statement, printer);
                     break;
                 case typescript.SyntaxKind.ForStatement:
+                    endSymbol = false;
                     this.ForStatement(statement, printer);
                     break;
                 case typescript.SyntaxKind.ForInStatement:
+                    endSymbol = false;
                     this.ForInStatement(statement, printer);
                     break;
                 case typescript.SyntaxKind.ForOfStatement:
+                    endSymbol = false;
                     this.ForOfStatement(statement, printer);
                     break;
                 case typescript.SyntaxKind.ReturnStatement:
@@ -1893,9 +1919,11 @@ class Parser extends Printer {
                     break;
                 /// with / switch
                 case typescript.SyntaxKind.WithStatement:
+                    endSymbol = false;
                     this.WhileStatement(statement, printer);
                     break;
                 case typescript.SyntaxKind.SwitchStatement:
+                    endSymbol = false;
                     this.SwitchStatement(statement, printer);
                     break;
                 /// label : xxx
@@ -1908,6 +1936,7 @@ class Parser extends Printer {
                     break;
                 /// try catch finally
                 case typescript.SyntaxKind.TryStatement:
+                    endSymbol = false;
                     this.TryStatement(statement, printer);
                     break;
                 case typescript.SyntaxKind.CatchClause:
@@ -1915,8 +1944,17 @@ class Parser extends Printer {
                     break;
 
             }
-            printer.write('\0;');
+            if (endSymbol) {
+                printer.write('\0;');
+            }
         }
+        if (multiLine) {
+            printer.exitClosure();
+            printer.writeln('}');
+        }
+    }
+    Block(astNode, printer) {
+        this.Statements(astNode, printer);
     }
 
     EmptyStatement(astNode, printer) {
@@ -1939,6 +1977,13 @@ class Parser extends Printer {
     }
 
     IfStatement(astNode, printer) {
+        debugger;
+        printer.write('\0if (');
+        printer.write('\0');
+        this.EvalExpression(astNode.expression, printer);
+        printer.write('\0)');
+        const thenStatement = astNode.thenStatement;
+        this.Statements(thenStatement, printer);
     }
 
     DoStatement(astNode, printer) {
@@ -2093,11 +2138,7 @@ class Parser extends Printer {
         // parameter
         this.FunctionParameter(astNode, functionIdentifier);
         // function body
-        functionIdentifier.write(' {');
-        functionIdentifier.enterClosure();
         this.Block(astNode.body, functionIdentifier);
-        functionIdentifier.exitClosure();
-        functionIdentifier.writeln('}');
 
     }
 
