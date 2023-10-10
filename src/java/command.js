@@ -7,7 +7,7 @@ import pkg from "../pkg.js";
 
 import { createColors } from 'picocolors';
 import Service from "../service.js";
-import javaPlugin from "../plugins/java-plugin.js";
+import javaPlugin from "./plugin.js";
 
 const colors = createColors(true);
 

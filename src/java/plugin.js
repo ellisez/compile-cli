@@ -399,7 +399,7 @@ class Parser extends Printer {
                     expression = 'Number';
                     break;
                 case typescript.SyntaxKind.BooleanKeyword:
-                    expression = 'Boolean';
+                    expression = 'boolean';
                     break;
                 case typescript.SyntaxKind.ArrayType:
                     const elementType = this.EvalJavaType(typeNode.elementType);
@@ -459,7 +459,7 @@ class Parser extends Printer {
                     type = 'Number';
                     break;
                 case typescript.SyntaxKind.BooleanKeyword:
-                    type = 'Boolean';
+                    type = 'boolean';
                     break;
                 case typescript.SyntaxKind.ArrayType:
                     let elementType = this.EvalJavaType(typeNode.elementType);
@@ -1953,6 +1953,7 @@ class Parser extends Printer {
             printer.writeln('}');
         }
     }
+
     Block(astNode, printer) {
         this.Statements(astNode, printer);
     }
@@ -2073,7 +2074,7 @@ class Parser extends Printer {
             variableIdentifier.isFinal = true;
         }
 
-        // type
+        // types
         const javaType = this.EvalJavaType(astNode.type, '');
         variableIdentifier.rawType = javaType.expression;
         variableIdentifier.rawTypeModule = javaType.module;
@@ -3073,9 +3074,9 @@ class JavaContext {
 }
 
 const javaContext = new JavaContext();
-export default function JavaPlugin(serviceOptions) {
+export default function Plugin(serviceOptions) {
     const basePlugin = plugin(serviceOptions);
-    basePlugin.name = 'java-plugin';
+    basePlugin.name = 'java-lint';
     basePlugin.transform = function (contents, id) {
         const pluginContext = this;
 
@@ -3083,16 +3084,20 @@ export default function JavaPlugin(serviceOptions) {
             ...basePlugin.tsOptions,
             fileName: id,
             transformers: {
-                before: [compileContext => sourceFile => {
-                    const parser = new Parser({
-                        pluginContext,
-                        serviceOptions,
-                        pluginObject: basePlugin,
-                        compileContext,
-                    });
-                    parser.parse(sourceFile);
-                    return sourceFile;
-                }]
+                before: [
+                    function Transformer(compileContext) {
+                        return function Visitor(sourceFile) {
+                            const parser = new Parser({
+                                pluginContext,
+                                serviceOptions,
+                                pluginObject: basePlugin,
+                                compileContext,
+                            });
+                            parser.parse(sourceFile);
+                            return sourceFile;
+                        }
+                    },
+                ]
             }
         };
 

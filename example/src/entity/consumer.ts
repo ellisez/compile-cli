@@ -1,7 +1,7 @@
 import Order from "./order";
 
 export default class Consumer {
-    id: number;
+    id: int;
     nickname: string;
     balance: number;
 

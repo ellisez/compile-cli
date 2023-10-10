@@ -1,10 +1,9 @@
 {
-  "name": "@compile/cli",
+  "name": "@compile/example",
   "private": true,
   "version": "0.0.1",
-  "type": "module",
   "bin": "bin/compile",
-  "author": "sss",
+  "author": "ellis",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc && vite build",
