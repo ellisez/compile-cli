@@ -2,21 +2,21 @@ import Product from "./product";
 import Consumer from "./consumer";
 
 export default class Order {
-    id: number;
+    id: bigint;
     no: string;
 
     consumer: Consumer;
 
     itemList: OrderItem[];
 
-    discount: number;
+    discount: bigint;
     total: number;
 
     isPaid: false;
 
     toString(): string {
         let code = '';
-        for (let orderItem of this.itemList) {
+        for (const orderItem of this.itemList) {
             code += orderItem.toString() + '\n';
         }
         return code;

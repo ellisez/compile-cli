@@ -1,16 +1,16 @@
-export function plus(a: number, b: number): number {
+export function plus(a: bigint, b: bigint): bigint {
     return a+b;
 }
 
-export function minus(a: number, b: number): number {
+export function minus(a: bigint, b: bigint): number {
     return a-b;
 }
 
-export function asterisk(a: number, b: number): number {
+export function asterisk(a: bigint, b: bigint): number {
     return a*b;
 }
 
-export function slash(a: number, b: number): number {
+export function slash(a: bigint, b: bigint): number {
     return a/b;
 }
 

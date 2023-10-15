@@ -8,7 +8,7 @@ export default class OrderService {
         order.id = ++OrderService.id;
         order.consumer = consumer;
         order.itemList = itemList;
-        for (let item of itemList) {
+        for (const item of itemList) {
             if (!item.product.isOnSale) {
                 throw item.product.name + ' is off shelf';
             }
@@ -18,7 +18,7 @@ export default class OrderService {
 
     doPay(order) {
         if (order.isPaid == false) {
-            for (let item of order.itemList) {
+            for (const item of order.itemList) {
                 if (item.product.count < item.count) {
                     throw item.product.name + ' is not enough.';
                 }

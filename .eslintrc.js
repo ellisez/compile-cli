@@ -5,7 +5,7 @@ module.exports = {
     },
     "extends": [
         "eslint:recommended",
-        "plugin:@compile/eslint-plugin/recommended"
+        "plugin:@typescript-eslint/recommended"
     ],
     "overrides": [
         {

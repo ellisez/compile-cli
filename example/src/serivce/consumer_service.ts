@@ -1,7 +1,7 @@
 import Consumer from "../entity/consumer";
 
 export default class ConsumerService {
-    private static id = 0;
+    private static id: bigint = 0n;
 
     createConsumer(): Consumer {
         const consumer = new Consumer();
@@ -10,7 +10,7 @@ export default class ConsumerService {
         return consumer;
     }
 
-    recharge(consumer: Consumer, money: number) {
+    recharge(consumer: Consumer, money: bigint) {
         consumer.balance += money;
     }
 }

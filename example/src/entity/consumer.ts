@@ -1,9 +1,9 @@
 import Order from "./order";
 
 export default class Consumer {
-    id: int;
+    id: bigint;
     nickname: string;
-    balance: number;
+    balance: bigint;
 
     orderList: Order[];
 

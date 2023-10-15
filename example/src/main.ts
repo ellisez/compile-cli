@@ -64,8 +64,8 @@ const plusLoad = plus;
 
 const piLoad = pi;
 function testImport() {
-    let a=1;
-    let b=2;
+    const a=1n;
+    const b=2n;
     console.log(plusLoad(a, b));
     console.log(minus(a,b));
     console.log(asterisk(a,b));
@@ -73,6 +73,7 @@ function testImport() {
     console.log(piLoad);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function main(...args: string[]): void {
     testClass();
     testImport();
