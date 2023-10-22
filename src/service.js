@@ -1,7 +1,7 @@
-import { rollup } from "rollup";
-import log from "./log.js";
+const { rollup } = require("rollup");
+const log = require("./log.js");
 
-export default class Service {
+module.exports = class Service {
     options = {
         logLevel: 'debug',
         input: 'src/main.ts',

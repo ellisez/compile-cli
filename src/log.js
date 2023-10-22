@@ -1,4 +1,4 @@
-import { createColors } from 'picocolors';
+const { createColors } = require('picocolors');
 
 const colors = createColors(true);
 
@@ -63,4 +63,4 @@ class Log {
     }
 }
 
-export default new Log();
+module.exports = new Log();

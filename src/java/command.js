@@ -1,13 +1,13 @@
-import cli from "../cli.js";
-import path from "node:path";
-import { readConfig, writeConfig } from "../config.js";
-import log from "../log.js";
-import { promises } from "node:readline";
-import pkg from "../pkg.js";
+const cli = require("../cli.js");
+const path = require("node:path");
+const { readConfig, writeConfig } = require("../config.js");
+const log = require("../log.js");
+const { promises } = require("node:readline");
+const { pkg } = require("../pkg.js");
 
-import { createColors } from 'picocolors';
-import Service from "../service.js";
-import javaPlugin from "./plugin.js";
+const { createColors } = require('picocolors');
+const Service = require("../service.js");
+const javaPlugin = require("./plugin.js");
 
 const colors = createColors(true);
 
@@ -118,6 +118,6 @@ cli
         serviceOptions.output.sourcemap = false;
         serviceOptions.plugins.push(javaPlugin(serviceOptions));
         // run
-        await service.build();
+        //await service.build();
     })
 

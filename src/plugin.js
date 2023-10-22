@@ -1,8 +1,9 @@
-import path from 'node:path';
-import process from 'node:process';
-import fs from 'node:fs';
-import typescript from "typescript";
-import log from "./log.js";
+const path = require('node:path');
+const process = require('node:process');
+const fs = require('node:fs');
+const ts = require("typescript");
+const log = require("./log.js");
+const { pkgResolve, entryFile } = require("./pkg");
 
 const cwd = process.cwd();
 
@@ -16,24 +17,17 @@ function pathExists(id) {
     }
 }
 
-function getNodeEntry(nodePath) {
-    const pkgPath = path.resolve(nodePath, 'package.json');
-    const pkgInfo = JSON.parse(fs.readFileSync(pkgPath).toString());
-    const entry = pkgInfo.main ?? 'src/main.js';
-    return path.resolve(nodePath, entry);
-}
-
 function matchAbsolute(id) {
     if (path.isAbsolute(id)) {
         return pathExists(id);
     }
 }
 
-function matchRelative(id, importer) {
+function matchRelative(id, conster) {
     const regexp = /^[./]/;
     if (regexp.test(id)) {
-        const importerDir = path.dirname(importer);
-        const relativePath = path.join(importerDir, id);
+        const consterDir = path.dirname(conster);
+        const relativePath = path.join(consterDir, id);
         return pathExists(relativePath);
     }
 }
@@ -50,25 +44,24 @@ function matchRootPath(id) {
 function matchNode(id) {
     const nodePath = path.join(cwd, 'node_modules', id);
     if (pathExists(nodePath)) {
-        return getNodeEntry(nodePath);
+        return entryFile;
     }
 }
 
 function tsconfig(directory = cwd) {
     let tsconfigPath = path.join(directory, 'tsconfig.json');
-    if (!fs.existsSync(tsconfigPath)) {
+    const json = pkgResolve(tsconfigPath);
+    if (!json) {
         const parentPath = path.dirname(directory);
         if (!parentPath) {
             throw Error(`Not found tsconfig.json in ${cwd}.`);
         }
         return tsconfig(parentPath);
     }
-    let text = fs.readFileSync(tsconfigPath).toString();
-    text = text.replace(/\/\*.*\*\//g, '');
-    return JSON.parse(text);
+    return json;
 }
 
-export default function plugin(serviceOptions) {
+module.exports = function(serviceOptions) {
     return {
         tsOptions: tsconfig(cwd),
         resolveId(id, importer) {
@@ -99,9 +92,9 @@ export default function plugin(serviceOptions) {
         },
 
         transform(contents, id) {
-            const transpileOutput = typescript.transpileModule(contents, {
+            const transpileOutput = ts.transpileModule(contents, {
                 compilerOptions: {
-                    sourceMap: true, target: typescript.ScriptTarget.Latest
+                    sourceMap: true, target: ts.ScriptTarget.Latest
                 },
                 fileName: id
             });

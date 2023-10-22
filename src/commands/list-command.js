@@ -1,6 +1,6 @@
-import cli from "../cli.js";
-import { readConfig } from "../config.js";
-import log from "../log.js";
+const cli = require("../cli.js");
+const { readConfig } = require("../config.js");
+const log = require("../log.js");
 
 cli
     .command('list')

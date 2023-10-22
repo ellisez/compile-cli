@@ -1,5 +1,5 @@
-import path from "node:path";
-import fs from "node:fs";
+const path = require("node:path");
+const fs = require("node:fs");
 
 let _cfg = null;
 
@@ -32,6 +32,7 @@ function writeConfig(fun) {
 }
 
 let cache = {}
+
 function versionObject(target) {
     let cacheTarget = cache[target];
     if (!cacheTarget) {
@@ -48,4 +49,4 @@ function versionObject(target) {
     return targetVersion;
 }
 
-export { readConfig, writeConfig , versionObject };
+module.exports = { readConfig, writeConfig, versionObject };

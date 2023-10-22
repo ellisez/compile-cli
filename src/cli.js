@@ -1,7 +1,7 @@
-import { Command } from "commander";
-import process from 'node:process';
-import log from './log.js';
-import pkg from "./pkg.js";
+const { Command } = require("commander");
+const process = require('node:process');
+const log = require('./log.js');
+const { pkg } = require("./pkg.js");
 
 if (!pkg) {
     log.error('This is not a correct application, "package.json" cannot be found.');
@@ -28,4 +28,4 @@ program
         process.exit(-1);
     });
 
-export default program;
+module.exports = program;

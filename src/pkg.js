@@ -1,12 +1,35 @@
-import path from "node:path";
-import fs from "node:fs";
+const path = require("node:path");
+const fs = require("node:fs");
 
 const pkgPath = path.resolve('package.json');
 
-function getPkgInfo() {
+function pkgResolve(pkgPath) {
     if (fs.existsSync(pkgPath)) {
-        return JSON.parse(fs.readFileSync(pkgPath).toString());
+        let content = fs.readFileSync(pkgPath).toString();
+        content = content.replace(/\n\s*\/\*.*?\*\//g, '');
+        content = content.replace(/\n\s*\/\/.*\n/g, '');
+        return JSON.parse(content);
     }
 }
-let pkg = getPkgInfo();
-export default pkg;
+const pkg = pkgResolve(pkgPath);
+
+function entryResolve() {
+    let entry = pkg.main;
+    if (!entry) {
+        entry = 'src/main.ts';
+        let entryPath = path.resolve(entry);
+        if (fs.existsSync(entryPath)) {
+            return entryPath;
+        }
+        entry = 'src/main.js';
+    }
+    return path.resolve(entry);
+}
+const entryFile = entryResolve();
+
+module.exports = {
+    pkg,
+    pkgResolve,
+    entryFile
+};
+
