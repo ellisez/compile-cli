@@ -6,11 +6,7 @@ const EventCenter = require("./event.js");
 const { entryFile } = require("../pkg.js");
 const log = require('../log.js');
 const {
-    toCamel,
-    toFileName,
-    toPackageName,
-    toClassName,
-    toClassFullName,
+    toCamel, toFileName, toPackageName, toClassName, toClassFullName,
 } = require("./utils");
 const {
     Closure,
@@ -148,7 +144,16 @@ class JavaParser {
 
         // child
         for (let statement of sourceFile.statements) {
-            this.visitNode(statement, javaModule, javaModule.closure);
+            const javaStatement = this.visitNode(statement, javaModule, javaModule.closure);
+            if (javaStatement) {
+                if (Array.isArray(javaStatement)) {
+                    for (let item of javaStatement) {
+                        javaModule.addNestedClass(item);
+                    }
+                } else {
+                    javaModule.addNestedClass(javaStatement);
+                }
+            }
         }
     }
 
@@ -167,6 +172,77 @@ class JavaParser {
             return;
         }
         return visitor.call(this, tsNode, javaNode, closure);
+    }
+
+    createPropertyDeclaration({
+                                  accessor, isStatic, isFinal,
+                                  type, name, initializer,
+                                  javaNode, pos, end, closure
+                              }) {
+
+        const propertyDeclaration = new PropertyDeclaration(javaNode, name, pos, end);
+
+        propertyDeclaration.accessor = accessor === undefined ? 'public' : accessor;
+        propertyDeclaration.isStatic = isStatic === undefined ? false : isStatic;
+        propertyDeclaration.isFinal = isFinal === undefined ? false : isFinal;
+
+        propertyDeclaration.explicitType = this.compileUtils.parseType(type);
+
+        const javaInitializer = this.visitNode(initializer, propertyDeclaration, closure);
+        if (javaInitializer) {
+            propertyDeclaration.initializer = javaInitializer;
+            if (javaInitializer.type) {
+                propertyDeclaration.implicitType = javaInitializer.type;
+            }
+        }
+        return propertyDeclaration;
+    }
+
+    createMethodDeclaration({
+                                accessor, isStatic, isFinal,
+                                type, name, parameters, body,
+                                javaNode, pos, end
+                            }) {
+        const methodDeclaration = new MethodDeclaration(javaNode, name, pos, end);
+
+        methodDeclaration.accessor = accessor === undefined ? 'public' : accessor;
+        methodDeclaration.isStatic = isStatic === undefined ? false : isStatic;
+        methodDeclaration.isFinal = isFinal === undefined ? false : isFinal;
+
+        methodDeclaration.explicitReturnType = this.compileUtils.parseType(type);
+
+        for (let parameter of parameters) {
+            const javaParameter = this.TSParameter(parameter, methodDeclaration, methodDeclaration.closure);
+            methodDeclaration.addParameter(javaParameter);
+        }
+
+        const javaBlock = this.TSBlock(body, methodDeclaration, methodDeclaration.closure);
+        methodDeclaration.body = javaBlock;
+        methodDeclaration.implicitReturnType = javaBlock.implicitReturnType;
+        methodDeclaration.implicitType = this.compileUtils.getFunctionType(methodDeclaration);
+
+        return methodDeclaration;
+    }
+
+    createLambdaFunction({
+                             type, parameters, body,
+                             javaNode, pos, end
+                         }) {
+        const lambdaFunction = new LambdaFunction(javaNode, pos, end);
+
+        lambdaFunction.explicitReturnType = this.compileUtils.parseType(type);
+
+        for (let parameter of parameters) {
+            const javaParameter = this.TSParameter(parameter, lambdaFunction, lambdaFunction.closure);
+            lambdaFunction.addParameter(javaParameter);
+        }
+
+        const javaBlock = this.TSBlock(body, lambdaFunction, lambdaFunction.closure);
+        lambdaFunction.body = javaBlock;
+        lambdaFunction.implicitReturnType = javaBlock.implicitReturnType;
+        lambdaFunction.implicitType = this.compileUtils.getFunctionType(lambdaFunction);
+
+        return lambdaFunction;
     }
 
     /// a();
@@ -212,31 +288,48 @@ class JavaParser {
         const importClause = tsNode.importClause;
         const moduleSpecifier = tsNode.moduleSpecifier.text;
 
-        const module = javaNode.module;
-        const fileDir = path.dirname(module.fileName);
+        const currentModule = javaNode.module;
+
+        const fileDir = path.dirname(currentModule.fileName);
 
         let modulePath = path.resolve(fileDir, moduleSpecifier);
         const modulePackage = toClassFullName(modulePath);
 
-        let importDeclaration = module.imports[modulePackage];
-        if (!importDeclaration) {
-            importDeclaration = new ImportDeclaration(javaNode, tsNode.pos, tsNode.end);
-            importDeclaration.modulePackage = modulePackage;
-            module.imports[modulePackage] = importDeclaration;
-        }
+        currentModule.imports.push(modulePackage);
 
-        const moduleNamed = importClause.name.escapedText;
-        importDeclaration.moduleNamedBindings.add(moduleNamed);
+        const module = this.project.moduleMap[modulePackage];
+        if (!module) return;
+
+        if (!importClause) return;
+
+        const moduleClosure = module.closure;
+        if (importClause.name) {
+            const moduleNamed = importClause.name.escapedText;
+            closure.var(moduleNamed, module);
+        }
 
         const namedBindings = importClause.namedBindings;
         if (namedBindings) {
             for (let element of namedBindings.elements) {
                 const propertyBinding = element.name.escapedText;
-                let propertyName = element.propertyName.escapedText;
-                if (!propertyName) {
-                    propertyName = propertyBinding;
+
+                let propertyName = propertyBinding;
+                if (element.propertyName) {
+                    propertyName = element.propertyName.escapedText;
                 }
-                importDeclaration.propertyNamedBindings[propertyName] = propertyBinding;
+
+                if (propertyName === 'default') {
+                    const exportDefault = moduleClosure.local('exportDefault');
+                    if (exportDefault) {
+                        closure.var(propertyBinding, exportDefault);
+                    } else {
+                        closure.var(propertyBinding, module);
+                    }
+                } else {
+                    const propertyDeclaration = moduleClosure.local(propertyName);
+                    closure.var(propertyBinding, propertyDeclaration);
+                }
+
             }
         }
     }
@@ -278,12 +371,12 @@ class JavaParser {
             }
         } else {
             classDeclaration = new ClassDeclaration(javaNode, name, pos, end);
-            javaNode.newVariable(name, classDeclaration);
+            javaNode.var(name, classDeclaration);
 
             if (javaNode instanceof JavaModule) {
                 javaNode.addNestedClass(classDeclaration);
             } else if (javaNode instanceof Block) {
-                javaNode.var(classDeclaration);
+                javaNode.var(name, classDeclaration);
             }
         }
 
@@ -293,7 +386,10 @@ class JavaParser {
 
         const members = tsNode.members;
         for (let member of members) {
-            this.visitNode(member, classDeclaration, classDeclaration.closure);
+            const memberNode = this.visitNode(member, classDeclaration, classDeclaration.closure);
+            if (memberNode) {
+                classDeclaration.addMember(memberNode);
+            }
         }
 
         return classDeclaration;
@@ -328,6 +424,8 @@ class JavaParser {
     TSVariableStatement(tsNode, javaNode, closure) {
         const declarationList = tsNode.declarationList;
 
+        let { isExport, isDefault, accessor, isStatic } = this.compileUtils.parseModifiers(tsNode);
+
         let isFinal = false;
         switch (declarationList.flags) {
             case ts.NodeFlags.Const:
@@ -335,22 +433,124 @@ class JavaParser {
                 break;
         }
 
-        for (let declaration of declarationList.declarations) {
-            const name = declaration.name.escapedText;
+        if (javaNode instanceof JavaModule) {
+            const defaultClass = javaNode.defaultClass;
+            closure = defaultClass.closure;
 
-            const variableDeclaration = new VariableDeclaration(javaNode, name, declaration.pos, declaration.end);
-            closure.var(name, variableDeclaration);
+            for (let declaration of declarationList.declarations) {
+                const name = declaration.name.escapedText;
+                const initializer = declaration.initializer;
+                const type = declaration.type;
 
-            variableDeclaration.isFinal = isFinal;
+                const propertyDeclaration = this.createPropertyDeclaration({
+                    accessor, isStatic, isFinal, type, name, initializer,
+                    javaNode: defaultClass, pos: declaration.pos, end: declaration.end, closure
+                });
 
-            const initializer = declaration.initializer;
-            variableDeclaration.initializer = this.visitNode(initializer, variableDeclaration, closure);
+                propertyDeclaration.initializer = this.visitNode(initializer, defaultClass, closure);
+                defaultClass.addMember(propertyDeclaration);
+            }
+        } else {
+            const variables = [];
+            for (let declaration of declarationList.declarations) {
+                const name = declaration.name.escapedText;
+                const initializer = declaration.initializer;
+                const type = declaration.type;
+
+                const variableDeclaration = new VariableDeclaration(javaNode, name, declaration.pos, declaration.end);
+
+                variableDeclaration.isFinal = isFinal;
+                variableDeclaration.explicitType = this.compileUtils.parseType(type);
+
+                variableDeclaration.initializer = this.visitNode(initializer, variableDeclaration, closure);
+                closure.var(name, variableDeclaration);
+
+                variables.push(variableDeclaration);
+            }
+            return variables;
         }
+    }
+
+    /// new A();
+    TSNewExpression(tsNode, javaNode, closure) {
+
     }
 
     /// function a() {}
     TSFunctionDeclaration(tsNode, javaNode, closure) {
-        debugger;
+        const name = tsNode.name ? tsNode.name.escapedText : '';
+        const type = tsNode.type;
+        const parameters = tsNode.parameters;
+        const body = tsNode.body;
+
+        const pos = tsNode.pos;
+        const end = tsNode.end;
+
+        let { isExport, isDefault, accessor, isStatic, isFinal } = this.compileUtils.parseModifiers(tsNode);
+
+        if (isExport) {
+            const module = javaNode.module;
+            const classDeclaration = module.defaultClass;
+            if (name) {
+                if (isDefault) {
+                    const methodDeclaration = this.createMethodDeclaration({
+                        accessor: 'private', isStatic, isFinal, type, name, parameters, body, javaNode, pos, end,
+                    });
+                    classDeclaration.addMember(methodDeclaration);
+
+                    const propertyDeclaration = this.createPropertyDeclaration({
+                        accessor, isStatic, isFinal, type: methodDeclaration.type, name: 'exportDefault',
+                        javaNode: classDeclaration, pos, end,
+                    });
+                    const identifier = new Identifier(propertyDeclaration);
+                    identifier.implicitType = methodDeclaration.type;
+                    identifier.text = name;
+                    identifier.declaration = methodDeclaration;
+
+                    propertyDeclaration.initializer = identifier;
+                    classDeclaration.addMember(propertyDeclaration);
+                } else {
+                    const methodDeclaration = this.createMethodDeclaration({
+                        accessor, isStatic, isFinal, type, name, parameters, body, javaNode: classDeclaration, pos, end,
+                    });
+                    classDeclaration.addMember(methodDeclaration);
+                }
+            } else {
+                const methodDeclaration = this.createMethodDeclaration({
+                    accessor,
+                    isStatic,
+                    isFinal,
+                    type,
+                    name: 'exportDefault',
+                    parameters,
+                    body,
+                    javaNode: classDeclaration,
+                    pos,
+                    end,
+                });
+                classDeclaration.addMember(methodDeclaration);
+            }
+        } else {
+            if (javaNode instanceof JavaModule) {
+                const classDeclaration = javaNode.defaultClass;
+
+                const propertyDeclaration = this.createPropertyDeclaration({
+                    accessor, isStatic, isFinal, type, name: 'exportDefault',
+                    javaNode: classDeclaration, pos, end,
+                });
+
+                const initializer = this.createLambdaFunction({
+                    type, parameters, body, javaNode: propertyDeclaration, name, pos, end
+                });
+                propertyDeclaration.initializer = initializer;
+                propertyDeclaration.implicitType = initializer.type;
+                classDeclaration.addMember(propertyDeclaration);
+            } else {
+                return this.createLambdaFunction({
+                    type, parameters, body, javaNode, pos, end,
+                })
+            }
+        }
     }
 
     /// for(let i=0; i< 3; i++) {}
@@ -384,7 +584,9 @@ class JavaParser {
         switchStatement.caseBlock = javaCaseBlock;
         for (let clause of clauses) {
             const javaClause = this.visitNode(clause, javaCaseBlock, closure);
-            javaCaseBlock.clauses.push(javaClause);
+            if (javaClause) {
+                javaCaseBlock.clauses.push(javaClause);
+            }
         }
 
         return switchStatement;
@@ -399,7 +601,15 @@ class JavaParser {
         caseClause.expression = this.visitNode(expression, caseClause, closure);
         for (let statement of statements) {
             const javaStatement = this.visitNode(statement, caseClause, closure);
-            caseClause.statements.push(javaStatement);
+            if (javaStatement) {
+                if (Array.isArray(javaStatement)) {
+                    for (let item of javaStatement) {
+                        caseClause.statements.push(item);
+                    }
+                } else {
+                    caseClause.statements.push(javaStatement);
+                }
+            }
         }
 
         return caseClause;
@@ -412,7 +622,15 @@ class JavaParser {
         const defaultClause = new DefaultClause(javaNode, tsNode.pos, tsNode.end);
         for (let statement of statements) {
             const javaStatement = this.visitNode(statement, defaultClause, closure);
-            defaultClause.statements.push(javaStatement);
+            if (javaStatement) {
+                if (Array.isArray(javaStatement)) {
+                    for (let item of javaStatement) {
+                        defaultClause.statements.push(item);
+                    }
+                } else {
+                    defaultClause.statements.push(javaStatement);
+                }
+            }
         }
 
         return defaultClause;
@@ -451,7 +669,7 @@ class JavaParser {
     /// i--;
     /// a.b;
     TSExpressionStatement(tsNode, javaNode, closure) {
-        return this.visitNode(tsNode, javaNode, closure);
+        return this.visitNode(tsNode.expression, javaNode, closure);
     }
 
     /// class A { constructor() {} }
@@ -463,6 +681,7 @@ class JavaParser {
         const end = tsNode.end;
 
         const constructorDeclaration = new ConstructorDeclaration(javaNode, pos, end);
+        javaNode.addMember(constructorDeclaration);
 
         const { accessor, isStatic, isFinal } = this.compileUtils.parseModifiers(tsNode);
 
@@ -488,23 +707,11 @@ class JavaParser {
         const pos = tsNode.pos;
         const end = tsNode.end;
 
-        const propertyDeclaration = new PropertyDeclaration(javaNode, name, pos, end);
-
         const { accessor, isStatic, isFinal } = this.compileUtils.parseModifiers(tsNode);
 
-        propertyDeclaration.accessor = accessor === undefined ? 'public' : accessor;
-        propertyDeclaration.isStatic = isStatic === undefined ? false : isStatic;
-        propertyDeclaration.isFinal = isFinal === undefined ? false : isFinal;
-
-        propertyDeclaration.explicitType = this.compileUtils.parseType(type);
-
-        const javaInitializer = this.visitNode(initializer, propertyDeclaration, closure);
-        if (javaInitializer) {
-            propertyDeclaration.initializer = javaInitializer;
-            if (javaInitializer.type) {
-                propertyDeclaration.implicitType = javaInitializer.type;
-            }
-        }
+        return this.createPropertyDeclaration({
+            accessor, isStatic, isFinal, type, name, initializer, javaNode, pos, end, closure
+        })
     }
 
     /// class A { public int b(double c) {} }
@@ -517,26 +724,11 @@ class JavaParser {
         const pos = tsNode.pos;
         const end = tsNode.end;
 
-        const methodDeclaration = new MethodDeclaration(javaNode, name, pos, end);
-
         const { accessor, isStatic, isFinal } = this.compileUtils.parseModifiers(tsNode);
 
-        methodDeclaration.accessor = accessor === undefined ? 'public' : accessor;
-        methodDeclaration.isStatic = isStatic === undefined ? false : isStatic;
-        methodDeclaration.isFinal = isFinal === undefined ? false : isFinal;
-
-        methodDeclaration.explicitReturnType = this.compileUtils.parseType(type);
-
-        for (let parameter of parameters) {
-            const javaParameter = this.TSParameter(parameter, methodDeclaration, methodDeclaration.closure);
-            methodDeclaration.addParameter(javaParameter);
-        }
-
-        const javaBlock = this.TSBlock(body, methodDeclaration, methodDeclaration.closure);
-        methodDeclaration.body = javaBlock;
-        methodDeclaration.implicitReturnType = javaBlock.implicitReturnType;
-        methodDeclaration.implicitType = this.compileUtils.getFunctionType(methodDeclaration);
-
+        return this.createMethodDeclaration({
+            accessor, isStatic, isFinal, type, name, parameters, body, javaNode, pos, end
+        });
     }
 
     /// function fun() {}
@@ -549,7 +741,15 @@ class JavaParser {
         const statements = tsNode.statements;
         for (let statement of statements) {
             const javaStatement = this.visitNode(statement, block, closure);
-            block.statements.push(javaStatement);
+            if (javaStatement) {
+                if (Array.isArray(javaStatement)) {
+                    for (let item of javaStatement) {
+                        block.statements.push(item);
+                    }
+                } else {
+                    block.statements.push(javaStatement);
+                }
+            }
         }
         return block;
     }
@@ -566,10 +766,9 @@ class JavaParser {
 
         const parameterDeclaration = new ParameterDeclaration(javaNode, name, pos, end);
 
-        parameterDeclaration.explicitType = this.parseType(type);
+        parameterDeclaration.explicitType = this.compileUtils.parseType(type);
 
-        const javaInitializer = this.visitNode(initializer, parameterDeclaration, closure);
-        parameterDeclaration.initializer = javaInitializer;
+        parameterDeclaration.initializer = this.visitNode(initializer, parameterDeclaration, closure);
 
         return parameterDeclaration;
     }
@@ -681,38 +880,38 @@ class CompileUtils {
         if (!javaNode) return 'void';
 
         if (isFunction(javaNode)) {
-            let ClassName = 'Function';
+            let functionClassName = 'Function';
             const typeParameters = javaNode.typeParameters;
             const parameters = javaNode.parameters;
             for (let typeParameter of typeParameters) {
                 if (!typeParameter) continue;
-                ClassName += toCamel(typeParameter);
+                functionClassName += toCamel(typeParameter);
             }
-            ClassName += 'Return' + toCamel(javaNode.returnType);
+            functionClassName += 'Return' + toCamel(javaNode.returnType);
 
-            let classMember = ClassMemberMap[ClassName];
-            if (!classMember) {
-                classMember = new ClassDeclaration(module, ClassName);
-                const methodMember = new MethodDeclaration(classMember, 'call');
+            let functionMember = this.#functionMemberMap[functionClassName];
+            if (!functionMember) {
+                functionMember = new ClassDeclaration(module, functionClassName);
+                const methodMember = new MethodDeclaration(functionMember, 'call');
                 methodMember.typeParameters = [...typeParameters];
                 methodMember.parameters = [...parameters];
-                methodMember.explicitReturnType = ClassName;
-                classMember.members.push(methodMember);
-                ClassMemberMap[ClassName] = classMember;
+                methodMember.explicitReturnType = functionClassName;
+                functionMember.addMember(methodMember);
+                this.#functionMemberMap[functionClassName] = functionMember;
             }
-            return ClassName;
+            return functionClassName;
         }
         return 'void';
     }
 
     useFunctionInterface(javaNode) {
-        const ClassName = this.getFunctionType(javaNode);
+        const functionClassName = this.getFunctionType(javaNode);
         const fullName = `${config.java.package}.FunctionInterface`;
         const module = project.moduleMap[fullName];
-        const classMember = module.members.find(classNode => classNode.name === ClassName);
-        if (!classMember) {
-            const ClassMember = ClassMemberMap[ClassName];
-            module.members.push(ClassMember);
+        const functionMember = module.members.find(classNode => classNode.name === functionClassName);
+        if (!functionMember) {
+            const functionMember = this.#functionMemberMap[functionClassName];
+            functionMember.addMember(functionMember);
         }
     }
 

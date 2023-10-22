@@ -1,5 +1,3 @@
-const { getVariable, setVariable, newVariable, getClosureFromNode } = require("./parse.js");
-
 class Closure {
     module;
 
@@ -35,6 +33,10 @@ class Closure {
     var(name, declaration) {
         const compileUtils = this.module.project.compileUtils;
         compileUtils.newVariable(this, name, declaration);
+    }
+
+    local(name) {
+        return this._variables[name];
     }
 }
 
@@ -145,6 +147,11 @@ class ClassDeclaration extends Declaration {
         this.explicitType = name;
     }
 
+    addMember(member) {
+        this.members.push(member);
+        this.closure.var(member.name, member);
+    }
+
     forEachChild(cb) {
         cb(this.staticBlock);
         this.members.forEach(node => cb(node));
@@ -162,7 +169,7 @@ class MemberDeclaration extends Declaration {
 
 class JavaModule extends ASTNode {
     project;
-    imports = {};
+    imports = [];
     packageName;
 
     get fullName() {
@@ -242,7 +249,6 @@ class PropertyDeclaration extends MemberDeclaration {
         super(parent, pos, end);
         this.name = name;
         this.fullName = parent.fullName + '.' + name;
-        parent.members.push(this);
     }
 
 
@@ -272,13 +278,12 @@ class ConstructorDeclaration extends MemberDeclaration {
         super(parent, pos, end);
         this.name = parent.name;
         this.applyClosure('');
-        parent.constructors.push(this);
     }
 
     addParameter(parameter) {
         this.parameters.push(parameter);
         this.typeParameters.push(parameter.type);
-        this.closure.var(parameter.name, parameter);
+        this.closure.var(parameter.name.escapedText, parameter);
     }
 
     get returnType() {
@@ -302,13 +307,12 @@ class MethodDeclaration extends MemberDeclaration {
         super(parent, pos, end);
         this.name = name;
         this.applyClosure(name);
-        parent.members.push(this);
     }
 
     addParameter(parameter) {
         this.parameters.push(parameter);
         this.typeParameters.push(parameter.type);
-        this.closure.var(parameter.name, parameter);
+        this.closure.var(parameter.name.escapedText, parameter);
     }
 
     get returnType() {
@@ -393,18 +397,19 @@ class Block extends ASTNode {
     }
 
     get(name) {
-        return getClosureFromNode(this).get(name);
+        const compileUtils = this.module.project.compileUtils;
+        return compileUtils.getClosureFromNode(this).get(name);
     }
 
     set(name, declaration) {
-        getClosureFromNode(this).set(name, declaration);
+        const compileUtils = this.module.project.compileUtils;
+        compileUtils.getClosureFromNode(this).set(name, declaration);
     }
 
-    var(declaration) {
+    var(name, declaration) {
+        const compileUtils = this.module.project.compileUtils;
         this.statements.push(declaration);
-        if (declaration.name) {
-            getClosureFromNode(this).var(declaration.name, declaration);
-        }
+        compileUtils.getClosureFromNode(this).var(name, declaration);
     }
 }
 
@@ -436,6 +441,10 @@ class VariableStatement extends Statement {
     forEachChild(cb) {
         this.declarationList.forEach(node => cb(node));
     }
+}
+
+class NewExpression {
+
 }
 
 class IfStatement extends Statement {
@@ -698,6 +707,7 @@ class ParenthesizedExpression extends Expression {
 }
 
 class LambdaFunction extends ASTNode {
+    implicitType;
     explicitReturnType;
     implicitReturnType;
     typeParameters = [];
@@ -707,6 +717,7 @@ class LambdaFunction extends ASTNode {
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
+        this.applyClosure('');
     }
 
     addParameter(parameter) {
@@ -948,6 +959,7 @@ module.exports = {
     Statement,
     ExpressionStatement,
     VariableStatement,
+    NewExpression,
     IfStatement,
     IterationStatement,
     DoStatement,
