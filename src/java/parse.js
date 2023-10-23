@@ -1,6 +1,5 @@
 const ts = require("typescript");
 const path = require("node:path");
-const process = require("node:process");
 const { readConfig, versionObject } = require('../config.js');
 const EventCenter = require("./event.js");
 const { entryFile } = require("../pkg.js");
@@ -20,6 +19,7 @@ const {
     PropertyDeclaration,
     ConstructorDeclaration,
     MethodDeclaration,
+    FunctionDeclaration,
     ParameterDeclaration,
     VariableDeclaration,
     ClassStaticBlockDeclaration,
@@ -69,7 +69,6 @@ const {
 const { NewExpression } = require("./ast");
 
 const config = readConfig();
-const cwd = process.cwd();
 
 const canUseVarKeyword = versionObject('java')[0] >= 10;
 
@@ -81,6 +80,80 @@ class JavaParser {
     eventCenter = new EventCenter();
 
     compileUtils;
+
+    entityMap = {
+        TSPropertyAccessExpression(tsNode, javaNode, closure) {
+            const name = tsNode.name;
+            const expression = tsNode.expression;
+
+            if (expression && name && expression.escapedText === 'console' && name.escapedText === 'log') {
+                const systemAccess = new PropertyAccessExpression(javaNode, tsNode.pos, tsNode.end);
+
+                const printIdentifier = new Identifier(systemAccess, name.pos, name.end);
+                printIdentifier.text = 'println';
+
+                const functionDeclaration = new FunctionDeclaration(javaNode, '');
+                functionDeclaration.parameters = ['param1'];
+                functionDeclaration.typeParameters = ['string'];
+
+                printIdentifier.implicitType = this.compileUtils.applyFunctionInterface(functionDeclaration);
+
+                systemAccess.name = printIdentifier;
+
+                const outAccess = new PropertyAccessExpression(systemAccess, expression.pos, expression.end);
+                systemAccess.expression = outAccess;
+
+                const outIdentifier = new Identifier(outAccess, name.pos, name.end);
+                outIdentifier.text = 'out';
+                outIdentifier.implicitType = 'Output';
+
+                outAccess.name = outIdentifier;
+
+                const systemIdentifier = new Identifier(outAccess, name.pos, name.end);
+                systemIdentifier.text = 'System';
+                systemIdentifier.implicitType = 'System';
+
+                outAccess.expression = systemIdentifier;
+
+                return systemAccess;
+            }
+        },
+        TSIdentifier(tsNode, javaNode, closure) {
+            if (javaNode.parent instanceof PropertyAccessExpression) return;
+            const text = tsNode.escapedText;
+            const module = javaNode.module;
+
+            const identifier = new Identifier(javaNode, tsNode.pos, tsNode.end);
+            switch (text) {
+                case 'Set':
+                    identifier.implicitType = 'Set';
+                    identifier.text = 'Set';
+                    module.push('java.util.Set');
+                    break;
+                case 'Map':
+                    identifier.implicitType = 'HashMap';
+                    identifier.text = 'HashMap';
+                    module.push('java.util.HashMap');
+                    break;
+            }
+            return identifier;
+        },
+        TSArrayLiteralExpression(tsNode, javaNode, closure) {
+            const elements = tsNode.elements;
+
+            const newExpression = new NewExpression(javaNode, tsNode.pos, tsNode.end);
+            const expression = new Identifier(newExpression, elements.pos, elements.end);
+            expression.text = 'ArrayList';
+            expression.implicitType = 'ArrayList';
+
+            newExpression.expression = expression;
+            for (let element of elements) {
+                const elementNode = this.visitNode(element, newExpression, closure);
+                newExpression.arguments.push(elementNode);
+            }
+            return newExpression;
+        },
+    }
 
     constructor(tsOptions) {
         this.tsOptions = tsOptions;
@@ -243,6 +316,12 @@ class JavaParser {
     /// b = a;
     /// a = 1;
     TSIdentifier(tsNode, javaNode, closure) {
+        const tryEntity = this.entityMap['TSIdentifier'];
+        if (tryEntity) {
+            const entity = tryEntity.call(this, tsNode, javaNode, closure);
+            if (entity) return entity;
+        }
+
         const text = tsNode.escapedText;
 
         const identifier = new Identifier(javaNode, tsNode.pos, tsNode.end);
@@ -263,6 +342,12 @@ class JavaParser {
 
     /// a.b
     TSPropertyAccessExpression(tsNode, javaNode, closure) {
+        const tryEntity = this.entityMap['TSPropertyAccessExpression'];
+        if (tryEntity) {
+            const entity = tryEntity.call(this, tsNode, javaNode, closure);
+            if (entity) return entity;
+        }
+
         const name = tsNode.name.escapedText;
         const expression = tsNode.expression;
 
@@ -270,6 +355,14 @@ class JavaParser {
         propertyAccessExpression.name = name;
         propertyAccessExpression.expression = this.visitNode(expression, propertyAccessExpression, closure);
         return propertyAccessExpression;
+    }
+
+    TSArrayLiteralExpression(tsNode, javaNode, closure) {
+        const tryEntity = this.entityMap['TSArrayLiteralExpression'];
+        if (tryEntity) {
+            const entity = tryEntity.call(this, tsNode, javaNode, closure);
+            if (entity) return entity;
+        }
     }
 
     /// this.a
@@ -509,11 +602,24 @@ class JavaParser {
         const finallyBlock = tsNode.finallyBlock;
 
         const tryStatement = new TryStatement(javaNode, tsNode.pos, tsNode.end);
-        tryStatement.tryBlock = this.visitNode(tryBlock, tryStatement, closure);
-        tryStatement.catchClause = this.visitNode(catchClause, tryStatement, closure);
-        tryStatement.finallyBlock = this.visitNode(finallyBlock, tryStatement, closure);
+        tryStatement.tryBlock = this.TSBlock(tryBlock, tryStatement, tryStatement.tryClosure);
+        tryStatement.catchClause = this.visitNode(catchClause, tryStatement, tryStatement.catchClause);
+        tryStatement.finallyBlock = this.TSBlock(finallyBlock, tryStatement, tryStatement.finallyClosure);
 
         return tryStatement;
+    }
+
+    /// catch(e) {}
+    TSCatchClause(tsNode, javaNode, closure) {
+        const variableDeclaration = tsNode.variableDeclaration;
+        const name = variableDeclaration.name.escapedText;
+        const block = tsNode.block;
+
+        const catchClause = new CatchClause(javaNode, tsNode.pos, tsNode.end);
+        catchClause.variableDeclaration = name;
+        catchClause.block = this.visitNode(block, catchClause, closure);
+
+        return catchClause;
     }
 
     /// function a() {}
@@ -826,6 +932,7 @@ class JavaParser {
     /// function fun() {}
     /// class A { fun() {} }
     TSBlock(tsNode, javaNode, closure) {
+        if (!tsNode) return;
         const pos = tsNode.pos;
         const end = tsNode.end;
 
@@ -932,8 +1039,10 @@ class CompileUtils {
                     break;
                 case ts.SyntaxKind.StaticKeyword:
                     result.isStatic = true;
+                    break;
                 case ts.SyntaxKind.ConstKeyword:
                     result.isFinal = true;
+                    break;
             }
         }
 
@@ -1000,6 +1109,7 @@ class CompileUtils {
 
             let functionMember = this.#functionMemberMap[functionClassName];
             if (!functionMember) {
+                const module = javaNode.module;
                 functionMember = new ClassDeclaration(module, functionClassName);
                 const methodMember = new MethodDeclaration(functionMember, 'call');
                 methodMember.typeParameters = [...typeParameters];
@@ -1013,15 +1123,17 @@ class CompileUtils {
         return 'void';
     }
 
-    useFunctionInterface(javaNode) {
+    applyFunctionInterface(javaNode) {
         const functionClassName = this.getFunctionType(javaNode);
         const fullName = `${config.java.package}.FunctionInterface`;
+        const project = javaNode.module.project;
         const module = project.moduleMap[fullName];
         const functionMember = module.members.find(classNode => classNode.name === functionClassName);
         if (!functionMember) {
             const functionMember = this.#functionMemberMap[functionClassName];
             functionMember.addMember(functionMember);
         }
+        return functionClassName;
     }
 
     getClassFromNode(javaNode) {

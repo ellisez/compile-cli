@@ -84,6 +84,19 @@ class Project {
     moduleMap = {};
 
     compileUtils;
+
+}
+
+class Entity {
+    moduleSpecifier;
+    identifier;
+    type;// var | function | type
+
+    constructor(moduleSpecifier, identifier, type) {
+        this.moduleSpecifier = moduleSpecifier;
+        this.identifier = identifier;
+        this.type = type
+    }
 }
 
 //==============//
@@ -235,18 +248,15 @@ class PropertyDeclaration extends MemberDeclaration {
 }
 
 function isFunction(node) {
-    return node.hasOwnProperty('explicitReturnType')
-        && node.hasOwnProperty('implicitReturnType')
-        && node.hasOwnProperty('parameters')
-        && node.hasOwnProperty('typeParameters')
-        && node.hasOwnProperty('body')
-        && node.hasOwnProperty('addParameter');
+    return 'returnType' in node
+        && 'parameters' in node
+        && 'typeParameters' in node;
 
 }
 
 class ConstructorDeclaration extends MemberDeclaration {
     explicitReturnType;
-    implicitReturnType;
+    implicitReturnType = 'void';
     typeParameters = [];
     parameters = [];
     body;
@@ -275,7 +285,36 @@ class ConstructorDeclaration extends MemberDeclaration {
 
 class MethodDeclaration extends MemberDeclaration {
     explicitReturnType;
-    implicitReturnType;
+    implicitReturnType = 'void';
+    typeParameters = [];
+    parameters = [];
+    body;
+
+    constructor(parent, name, pos, end) {
+        super(parent, pos, end);
+        this.name = name;
+        this.applyClosure(name);
+    }
+
+    addParameter(parameter) {
+        this.parameters.push(parameter);
+        this.typeParameters.push(parameter.type);
+        this.closure.var(parameter.name.escapedText, parameter);
+    }
+
+    get returnType() {
+        return this.explicitReturnType || this.implicitReturnType;
+    }
+
+    forEachChild(cb) {
+        this.parameters.forEach(node => cb(node));
+        cb(this.body);
+    }
+}
+
+class FunctionDeclaration extends Declaration {
+    explicitReturnType;
+    implicitReturnType = 'void';
     typeParameters = [];
     parameters = [];
     body;
@@ -362,7 +401,7 @@ class VariableDeclarationList extends ASTNode {
 //   Closure   //
 //=============//
 class Block extends ASTNode {
-    implicitReturnType;
+    implicitReturnType = 'void';
     statements = [];
 
     constructor(parent, pos, end) {
@@ -407,6 +446,14 @@ class ExpressionStatement extends Statement {
     }
 }
 
+class ArrayLiteralExpression extends Statement {
+    elements;
+
+    constructor(parent, pos, end) {
+        super(parent, pos, end);
+    }
+}
+
 class VariableStatement extends Statement {
 
     declarationList;
@@ -425,6 +472,7 @@ class NewExpression extends ASTNode {
     expression;
 
     arguments = [];
+
     constructor(parent, pos, end) {
         super(parent, pos, end);
     }
@@ -624,11 +672,26 @@ class ThrowStatement extends Statement {
 
 class TryStatement extends Statement {
     tryBlock;
+    tryClosure;
     catchClause;
+    catchClosure;
     finallyBlock;
+    finallyClosure;
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
+
+        if (parent) {
+            const compileUtils = this.module.project.compileUtils;
+            this.tryClosure = new Closure(compileUtils.getClosureFromNode(this.parent));
+            this.tryClosure.module = this.module;
+
+            this.catchClosure = new Closure(compileUtils.getClosureFromNode(this.parent));
+            this.catchClosure.module = this.module;
+
+            this.finallyClosure = new Closure(compileUtils.getClosureFromNode(this.parent));
+            this.finallyClosure.module = this.module;
+        }
     }
 
     forEachChild(cb) {
@@ -694,7 +757,7 @@ class ParenthesizedExpression extends Expression {
 class LambdaFunction extends ASTNode {
     implicitType;
     explicitReturnType;
-    implicitReturnType;
+    implicitReturnType = 'void';
     typeParameters = [];
     parameters = [];
     body;
@@ -938,6 +1001,7 @@ module.exports = {
     PropertyDeclaration,
     ConstructorDeclaration,
     MethodDeclaration,
+    FunctionDeclaration,
     ParameterDeclaration,
     VariableDeclaration,
     ClassStaticBlockDeclaration,
