@@ -3,13 +3,10 @@ class Closure {
 
     parent;
 
-    namespace;
-
     _variables = {};
 
-    constructor(parent, namespace = '') {
+    constructor(parent) {
         this.parent = parent;
-        this.namespace = namespace;
     }
 
     get(name) {
@@ -75,9 +72,9 @@ class ASTNode {
 
     }
 
-    applyClosure(namespace) {
+    applyClosure() {
         const compileUtils = this.module.project.compileUtils;
-        this.closure = new Closure(compileUtils.getClosureFromNode(this), namespace);
+        this.closure = new Closure(compileUtils.getClosureFromNode(this.parent));
         this.closure.module = this.module;
     }
 
@@ -141,10 +138,14 @@ class ClassDeclaration extends Declaration {
 
     constructor(parent, name, pos, end) {
         super(parent, pos, end);
-        this.applyClosure(name);
-        this.closure.var('this', this);
         this.name = name;
         this.explicitType = name;
+
+        if (parent) {
+            this.applyClosure();
+            this.closure.var('this', this);
+            this.closure.var(name, this);
+        }
     }
 
     addMember(member) {
@@ -167,51 +168,27 @@ class MemberDeclaration extends Declaration {
     }
 }
 
-class JavaModule extends ASTNode {
+class JavaModule extends ClassDeclaration {
     project;
     imports = [];
     packageName;
 
-    get fullName() {
-        return this.defaultClass.fullName;
-    }
-
-    set fullName(className) {
-        this.defaultClass.fullName = className;
-    }
-
     isResolved = false;
     fileName;
 
-    get name() {
-        return this.defaultClass.name;
-    }
-
-    set name(name) {
-        this.defaultClass.name = name;
-    }
-
-    defaultClass;
-
-    nestedClasses = [];
-
     constructor(project, fileName, packageName, name, pos, end) {
-        super(null, pos, end);
+        super(null, name, pos, end);
         this.fileName = fileName;
         this.packageName = packageName;
+        this.fullName = packageName + '.' + name;
         this.project = project;
         this.module = this;
 
-        this.defaultClass = new ClassDeclaration(this, name);
-        this.defaultClass.fullName = packageName + '.' + name;
-        this.defaultClass.accessor = 'public';
-        this.applyClosure('');
-        this.closure.var(name, this.defaultClass);
-    }
+        this.accessor = 'public';
 
-    addNestedClass(nestedClass) {
-        this.nestedClasses.push(nestedClass);
-        this.closure.var(nestedClass.name, nestedClass);
+        this.applyClosure(name);
+        this.closure.var('this', this);
+        this.closure.var(name, this);
     }
 
     forEachChild(cb) {
@@ -370,7 +347,7 @@ class ClassStaticBlockDeclaration extends Declaration {
 
 class VariableDeclarationList extends ASTNode {
 
-    declarations;
+    declarations = [];
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -443,8 +420,14 @@ class VariableStatement extends Statement {
     }
 }
 
-class NewExpression {
+class NewExpression extends ASTNode {
 
+    expression;
+
+    arguments = [];
+    constructor(parent, pos, end) {
+        super(parent, pos, end);
+    }
 }
 
 class IfStatement extends Statement {
@@ -468,6 +451,7 @@ class IterationStatement extends Statement {
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
+        this.applyClosure();
     }
 
     forEachChild(cb) {
@@ -678,8 +662,9 @@ class Expression extends ASTNode {
 }
 
 class ClassExpression extends ClassDeclaration {
-    constructor(parent, name) {
-        super(parent, name);
+
+    constructor(parent, name, pos, end) {
+        super(parent, name, pos, end);
     }
 }
 
@@ -723,7 +708,7 @@ class LambdaFunction extends ASTNode {
     addParameter(parameter) {
         this.parameters.push(parameter);
         this.typeParameters.push(parameter.type);
-        this.closure.new(parameter.name, parameter);
+        this.closure.var(parameter.name, parameter);
     }
 
     forEachChild(cb) {
@@ -785,7 +770,7 @@ class CallExpression extends Expression {
     expression;
     questionDotToken;
     typeArguments;
-    arguments;
+    arguments = [];
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -874,6 +859,7 @@ class Literal extends ASTNode {
 
     constructor(parent, type, text, pos, end) {
         super(parent, pos, end);
+        this.type = type;
     }
 
 
@@ -901,7 +887,8 @@ class FalseKeyword extends Literal {
 /// this.a
 class ThisKeyword extends Literal {
     constructor(parent, pos, end) {
-        const classNode = getClassFromNode(parent);
+        const compileUtils = parent.module.project.compileUtils;
+        const classNode = compileUtils.getClassFromNode(parent);
         super(parent, classNode.type, 'this', pos, end);
     }
 }
