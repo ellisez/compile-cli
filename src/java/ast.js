@@ -74,7 +74,8 @@ class ASTNode {
 
     applyClosure() {
         const compileUtils = this.module.project.compileUtils;
-        this.closure = new Closure(compileUtils.getClosureFromNode(this.parent));
+        const parentClosure = compileUtils.getClosureFromNode(this.parent);
+        this.closure = new Closure(parentClosure);
         this.closure.module = this.module;
     }
 
@@ -481,10 +482,19 @@ class NewExpression extends ASTNode {
 class IfStatement extends Statement {
     expression;
     thenStatement;
+    thenClosure;
     elseStatement;
+    elseClosure;
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
+        const compileUtils = this.module.project.compileUtils;
+        const parentClosure = compileUtils.getClosureFromNode(this.parent);
+        this.thenClosure = new Closure(parentClosure);
+        this.thenClosure.module = this.module;
+
+        this.elseClosure = new Closure(parentClosure);
+        this.elseClosure.module = this.module;
     }
 
     forEachChild(cb) {
@@ -642,6 +652,7 @@ class CaseClause extends ASTNode {
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
+        this.applyClosure();
     }
 
     forEachChild(cb) {
@@ -655,6 +666,7 @@ class DefaultClause extends ASTNode {
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
+        this.applyClosure();
     }
 }
 
@@ -683,13 +695,14 @@ class TryStatement extends Statement {
 
         if (parent) {
             const compileUtils = this.module.project.compileUtils;
-            this.tryClosure = new Closure(compileUtils.getClosureFromNode(this.parent));
+            const parentClosure = compileUtils.getClosureFromNode(this.parent);
+            this.tryClosure = new Closure(parentClosure);
             this.tryClosure.module = this.module;
 
-            this.catchClosure = new Closure(compileUtils.getClosureFromNode(this.parent));
+            this.catchClosure = new Closure(parentClosure);
             this.catchClosure.module = this.module;
 
-            this.finallyClosure = new Closure(compileUtils.getClosureFromNode(this.parent));
+            this.finallyClosure = new Closure(parentClosure);
             this.finallyClosure.module = this.module;
         }
     }

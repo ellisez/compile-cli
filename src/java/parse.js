@@ -312,6 +312,22 @@ class JavaParser {
         return lambdaFunction;
     }
 
+    parseStatements(tsNode, block, closure) {
+        const statements = tsNode.statements;
+        for (let statement of statements) {
+            const javaStatement = this.visitNode(statement, block, closure);
+            if (javaStatement) {
+                if (javaStatement instanceof VariableDeclarationList) {
+                    for (let item of javaStatement.declarations) {
+                        block.statements.push(item);
+                    }
+                } else {
+                    block.statements.push(javaStatement);
+                }
+            }
+        }
+    }
+
     /// a();
     /// b = a;
     /// a = 1;
@@ -722,12 +738,52 @@ class JavaParser {
 
     /// for(let i=0; i< 3; i++) {}
     TSForStatement(tsNode, javaNode, closure) {
-        debugger;
+        const initializer = tsNode.initializer;
+        const condition = tsNode.condition;
+        const incrementor = tsNode.incrementor;
+        const statement = tsNode.statement;
+
+        const forStatement = new ForStatement(javaNode, tsNode.pos, tsNode.end);
+        const javaInitializer = this.visitNode(initializer, forStatement, forStatement.closure);
+        if (javaInitializer) {
+            if (javaInitializer instanceof VariableDeclarationList) {
+                throw new Error(`'${initializer.getText()}' is not allowed in a compound declaration`);
+            } else {
+                forStatement.initializer = javaInitializer;
+            }
+        }
+
+        forStatement.condition = this.visitNode(condition, forStatement, forStatement.closure);
+
+        forStatement.incrementor = this.visitNode(incrementor, forStatement, forStatement.closure);
+
+        forStatement.statement = this.TSBlock(statement, forStatement, forStatement.closure);
+
+        return forStatement;
     }
 
     /// for(let key in object) {}
     TSForInStatement(tsNode, javaNode, closure) {
-        debugger;
+        const initializer = tsNode.initializer;
+        const expression = tsNode.expression;
+        const statement = tsNode.statement;
+
+
+        const forInStatement = new ForInStatement(javaNode, tsNode.pos, tsNode.end);
+        const javaInitializer = this.visitNode(initializer, forInStatement, forInStatement.closure);
+        if (javaInitializer) {
+            if (javaInitializer instanceof VariableDeclarationList) {
+                throw new Error(`'${initializer.getText()}' is not allowed in a compound declaration`);
+            } else {
+                forInStatement.initializer = javaInitializer;
+            }
+        }
+
+        forInStatement.expression = this.visitNode(expression, forInStatement, forInStatement.closure);
+
+        forInStatement.statement = this.TSBlock(statement, forInStatement, forInStatement.closure);
+
+        return forInStatement;
     }
 
     /// for(let item of array) {}
@@ -749,26 +805,28 @@ class JavaParser {
 
         forOfStatement.expression = this.visitNode(expression, forOfStatement, forOfStatement.closure);
 
-        const block = new Block(forOfStatement, statement.pos, statement.end);
-        forOfStatement.statement = block;
-        for (let statementNode of statement.statements) {
-            const javaStatement = this.visitNode(statementNode, forOfStatement, forOfStatement.closure);
-            if (javaStatement) {
-                if (javaStatement instanceof VariableDeclarationList) {
-                    for (let item of javaStatement.declarations) {
-                        block.statements.push(item);
-                    }
-                } else {
-                    block.statements.push(javaStatement);
-                }
-            }
-        }
+        forOfStatement.statement = this.TSBlock(statement, forOfStatement, forOfStatement.closure);
+
         return forOfStatement;
     }
 
     /// if (a == 1) {} else if (a == 2) {} else {}
     TSIfStatement(tsNode, javaNode, closure) {
-        debugger;
+        const expression = tsNode.expression;
+        const thenStatement = tsNode.thenStatement;
+        const elseStatement = tsNode.elseStatement;
+
+        const ifStatement = new IfStatement(javaNode, tsNode.pos, tsNode.end);
+        ifStatement.expression = this.visitNode(expression, ifStatement, closure);
+
+        ifStatement.thenStatement = this.visitNode(thenStatement, ifStatement, ifStatement.thenClosure);
+
+        if (elseStatement instanceof IfStatement) {
+            ifStatement.elseStatement = this.visitNode(elseStatement, ifStatement, closure);
+        } else {
+            ifStatement.elseStatement = this.visitNode(elseStatement, ifStatement, ifStatement.elseClosure);
+        }
+        return ifStatement;
     }
 
     /// switch(a) {}
@@ -793,43 +851,30 @@ class JavaParser {
     /// switch(a) { case 1: }
     TSCaseClause(tsNode, javaNode, closure) {
         const expression = tsNode.expression;
-        const statements = tsNode.statements;
 
         const caseClause = new CaseClause(javaNode, tsNode.pos, tsNode.end);
         caseClause.expression = this.visitNode(expression, caseClause, closure);
-        for (let statement of statements) {
-            const javaStatement = this.visitNode(statement, caseClause, closure);
-            if (javaStatement) {
-                if (javaStatement instanceof VariableDeclarationList) {
-                    for (let item of javaStatement.declarations) {
-                        caseClause.statements.push(item);
-                    }
-                } else {
-                    caseClause.statements.push(javaStatement);
-                }
-            }
-        }
+        this.parseStatements(tsNode, caseClause, caseClause.closure);
 
         return caseClause;
     }
 
+    /// throw error;
+    TSThrowStatement(tsNode, javaNode, closure) {
+        const expression = tsNode.expression;
+
+        const throwStatement = new ThrowStatement(javaNode, tsNode.pos, tsNode.end);
+        throwStatement.expression = this.visitNode(expression, throwStatement, closure);
+
+        return throwStatement;
+
+    }
+
     /// switch(a) { default: }
     TSDefaultClause(tsNode, javaNode, closure) {
-        const statements = tsNode.statements;
 
         const defaultClause = new DefaultClause(javaNode, tsNode.pos, tsNode.end);
-        for (let statement of statements) {
-            const javaStatement = this.visitNode(statement, defaultClause, closure);
-            if (javaStatement) {
-                if (javaStatement instanceof VariableDeclarationList) {
-                    for (let item of javaStatement.declarations) {
-                        defaultClause.statements.push(item);
-                    }
-                } else {
-                    defaultClause.statements.push(javaStatement);
-                }
-            }
-        }
+        this.parseStatements(tsNode, defaultClause, defaultClause.closure);
 
         return defaultClause;
     }
@@ -841,12 +886,13 @@ class JavaParser {
         const end = tsNode.end;
 
         const returnStatement = new ReturnStatement(javaNode, pos, end);
-        const javaExpression = this.visitNode(expression, returnStatement, closure);
-        returnStatement.expression = javaExpression;
+        if (expression) {
+            const javaExpression = this.visitNode(expression, returnStatement, closure);
+            returnStatement.expression = javaExpression;
 
-        const block = this.compileUtils.getBlockFromNode(javaNode);
-        block.implicitReturnType = javaExpression.type;
-
+            const block = this.compileUtils.getBlockFromNode(javaNode);
+            block.implicitReturnType = javaExpression.type;
+        }
         return returnStatement;
     }
 
@@ -937,19 +983,8 @@ class JavaParser {
         const end = tsNode.end;
 
         const block = new Block(javaNode, pos, end);
-        const statements = tsNode.statements;
-        for (let statement of statements) {
-            const javaStatement = this.visitNode(statement, block, closure);
-            if (javaStatement) {
-                if (javaStatement instanceof VariableDeclarationList) {
-                    for (let item of javaStatement.declarations) {
-                        block.statements.push(item);
-                    }
-                } else {
-                    block.statements.push(javaStatement);
-                }
-            }
-        }
+        this.parseStatements(tsNode, block, closure);
+
         return block;
     }
 
