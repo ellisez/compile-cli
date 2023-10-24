@@ -4,8 +4,9 @@ const { readConfig, versionObject } = require('../config.js');
 const EventCenter = require("./event.js");
 const { entryFile } = require("../pkg.js");
 const log = require('../log.js');
+const fs = require('node:fs');
 const {
-    toCamel, toFileName, toPackageName, toClassName, toClassFullName,
+    toCamel, toFileName, toPackageName, toClassName, toClassFullName, toJavaFile,
 } = require("./utils");
 const {
     Closure,
@@ -92,6 +93,10 @@ class JavaBundle {
     }
 
     writeBundle() {
+        this.#sourceMap.forEach((source, modulePackage) => {
+            const fileName = toJavaFile(modulePackage);
+            fs.writeFileSync(fileName, source);
+        })
 
     }
 }
@@ -244,7 +249,7 @@ class JavaParser {
         for (let statement of sourceFile.statements) {
             const javaStatement = this.visitNode(statement, javaModule, javaModule.closure);
             if (javaStatement) {
-                if (javaStatement instanceof Declaration) {
+                if (javaStatement instanceof Declaration || javaStatement instanceof VariableStatement) {
                     javaModule.addMember(javaStatement);
                 } else {
                     javaModule.staticBlock.body.statements.push(javaStatement);
@@ -479,6 +484,8 @@ class JavaParser {
         propertyDeclaration.isFinal = true;
 
         propertyDeclaration.initializer = this.visitNode(expression, defaultClass, defaultClass.closure);
+
+        return propertyDeclaration;
     }
 
     /// class a {}
@@ -490,6 +497,19 @@ class JavaParser {
 
         let classDeclaration;
         const { isExport, isDefault, accessor, isStatic, isFinal } = this.compileUtils.parseModifiers(tsNode);
+        const build = () => {
+            classDeclaration.accessor = accessor === undefined ? 'public' : accessor;
+            classDeclaration.isStatic = isStatic === undefined ? false : isStatic;
+            classDeclaration.isFinal = isFinal === undefined ? false : isFinal;
+
+            const members = tsNode.members;
+            for (let member of members) {
+                const memberNode = this.visitNode(member, classDeclaration, classDeclaration.closure);
+                if (memberNode) {
+                    classDeclaration.addMember(memberNode);
+                }
+            }
+        };
         if (isExport) {
             const module = javaNode.module;
             if (isDefault) {
@@ -500,6 +520,7 @@ class JavaParser {
                 classDeclaration = new ClassDeclaration(javaNode, name, pos, end);
                 module.addMember(classDeclaration);
             }
+            build();
         } else {
             classDeclaration = new ClassDeclaration(javaNode, name, pos, end);
             closure.var(name, classDeclaration);
@@ -509,21 +530,10 @@ class JavaParser {
             } else if (javaNode instanceof Block) {
                 closure.var(name, classDeclaration);
             }
+            build();
+
+            return classDeclaration;
         }
-
-        classDeclaration.accessor = accessor === undefined ? 'public' : accessor;
-        classDeclaration.isStatic = isStatic === undefined ? false : isStatic;
-        classDeclaration.isFinal = isFinal === undefined ? false : isFinal;
-
-        const members = tsNode.members;
-        for (let member of members) {
-            const memberNode = this.visitNode(member, classDeclaration, classDeclaration.closure);
-            if (memberNode) {
-                classDeclaration.addMember(memberNode);
-            }
-        }
-
-        return classDeclaration;
     }
 
     TSClassStaticBlockDeclaration(tsNode, javaNode, closure) {
@@ -567,7 +577,10 @@ class JavaParser {
 
         const variableStatement = new VariableStatement(javaNode, tsNode.pos, tsNode.end);
         variableStatement.declarationList = this.TSVariableDeclarationList(declarationList, javaNode, closure);
-        return variableStatement;
+
+        if (variableStatement.declarationList) {
+            return variableStatement;
+        }
     }
 
     /// let a=1, b=2;

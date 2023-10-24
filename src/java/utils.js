@@ -32,8 +32,17 @@ function toClassFullName(fileName) {
 function toFileName(classFullName) {
     if (classFullName.startsWith(config.java.package)) {
         let relativePath = classFullName.substr(config.java.package);
-        relativePath = relativePath.replace('.', path.sep);
-        return path.join(cwd, 'src', relativePath + '.java');
+        relativePath = relativePath.replace(/(?<=\.)(\w+)$/, ($0, $1) => $1.toLowerCase());
+        relativePath = relativePath.replace(/\./g, path.sep);
+        return path.join(cwd, 'src', relativePath + '.ts');
+    }
+}
+
+function toJavaFile(classFullName) {
+    if (classFullName.startsWith(config.java.package)) {
+        let relativePath = classFullName.substr(config.java.package);
+        relativePath = relativePath.replace(/\./g, path.sep);
+        return path.join(cwd, 'dist', 'src', 'main', 'java', relativePath + '.java');
     }
 }
 
@@ -58,4 +67,5 @@ module.exports = {
     toFileName,
     toCamel,
     toUnderline,
+    toJavaFile,
 }

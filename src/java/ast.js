@@ -180,7 +180,8 @@ class ClassDeclaration extends Declaration {
         }
         classModifier += ' ';
 
-        const memberNewLine = compileUtils.increaseIndent();
+        compileUtils.increaseIndent();
+        const memberNewLine = compileUtils.newLine;
 
         const staticBlockCode = this.staticBlock.getText();
         let staticBlockSegment = '';
@@ -201,7 +202,7 @@ class ClassDeclaration extends Declaration {
         if (memberSegment) {
             memberSegment += newLine;
         }
-        return `${classModifier}${this.name} {${staticBlockSegment}${memberSegment}}`;
+        return `${classModifier}class ${this.name} {${staticBlockSegment}${memberSegment}}`;
     }
 }
 
@@ -260,7 +261,7 @@ class JavaModule extends ClassDeclaration {
 
         const classSection = super.getText();
 
-        return `${packageSegment}${newLine}${newLine}${importSection}${newLine}${classSection}`;
+        return `${packageSegment}${newLine}${newLine}${importSection}${newLine}${newLine}${classSection}`;
     }
 }
 
@@ -442,7 +443,8 @@ class ClassStaticBlockDeclaration extends ASTNode {
     getText() {
         const compileUtils = this.module.project.compileUtils;
         const newLine = compileUtils.newLine;
-        const statementNewLine = compileUtils.increaseIndent();
+        compileUtils.increaseIndent();
+        const statementNewLine = compileUtils.newLine;
         compileUtils.decreaseIndent();
         if (this.body.statements.length > 0) {
             return `static {${statementNewLine}${this.body.getText()}${newLine}`;

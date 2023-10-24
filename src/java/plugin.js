@@ -10,5 +10,6 @@ module.exports = function (serviceOptions) {
     const parser = new Parser(tsOptions);
     const javaBundle = parser.parse();
     javaBundle.generateBundle();
+    javaBundle.writeBundle();
 }
 
