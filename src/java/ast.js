@@ -186,16 +186,16 @@ class ClassDeclaration extends Declaration {
         const staticBlockCode = this.staticBlock.getText();
         let staticBlockSegment = '';
         if (staticBlockCode) {
-            staticBlockSegment = `${memberNewLine}${staticBlockCode}`;
+            staticBlockSegment = memberNewLine + staticBlockCode;
         }
 
 
         let memberSegment = '';
         for (let member of this.members) {
-            if (memberSegment) {
-                memberSegment += memberNewLine;
+            const memberCode = member.getText();
+            if (memberCode) {
+                memberSegment += memberNewLine + memberCode;
             }
-            memberSegment += member.getText();
         }
         compileUtils.decreaseIndent();
 
