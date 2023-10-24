@@ -72,6 +72,30 @@ const config = readConfig();
 
 const canUseVarKeyword = versionObject('java')[0] >= 10;
 
+class JavaBundle {
+    #project;
+
+    #sourceMap = new Map();
+
+    constructor(project) {
+        this.#project = project;
+    }
+
+    getProject() {
+        return this.#project;
+    }
+
+    generateBundle() {
+        this.#project.moduleMap.forEach((module, fullName) => {
+            this.#sourceMap.set(fullName, module.getText());
+        });
+    }
+
+    writeBundle() {
+
+    }
+}
+
 class JavaParser {
     tsOptions;
     tsProgram;
@@ -172,6 +196,7 @@ class JavaParser {
         for (const sourceFile of sourceFiles) {
             this.TSSourceFile(sourceFile);
         }
+        return new JavaBundle(this.project);
     }
 
     TSProgram() {
@@ -194,10 +219,10 @@ class JavaParser {
             const fullName = `${config.java.package}.FunctionInterface`;
             const fileName = toFileName(fullName);
             const moduleMap = this.project.moduleMap;
-            let module = moduleMap[fullName];
+            let module = moduleMap.get(fullName);
             if (!module) {
                 module = new JavaModule(this.project, fileName, config.java.package, 'FunctionInterface');
-                moduleMap[fullName] = module;
+                moduleMap.set(fullName, module);
             }
         }
     }
@@ -213,13 +238,17 @@ class JavaParser {
 
         // ast
         const javaModule = new JavaModule(this.project, fileName, packageName, name, pos, end);
-        this.project.moduleMap[javaModule.fullName] = javaModule;
+        this.project.moduleMap.set(javaModule.fullName, javaModule);
 
         // child
         for (let statement of sourceFile.statements) {
             const javaStatement = this.visitNode(statement, javaModule, javaModule.closure);
             if (javaStatement) {
-                javaModule.addMember(javaStatement);
+                if (javaStatement instanceof Declaration) {
+                    javaModule.addMember(javaStatement);
+                } else {
+                    javaModule.staticBlock.body.statements.push(javaStatement);
+                }
             }
         }
     }
@@ -400,7 +429,7 @@ class JavaParser {
 
         currentModule.imports.push(modulePackage);
 
-        const module = this.project.moduleMap[modulePackage];
+        const module = this.project.moduleMap.get(modulePackage);
         if (!module) return;
 
         if (!importClause) return;
@@ -495,6 +524,16 @@ class JavaParser {
         }
 
         return classDeclaration;
+    }
+
+    TSClassStaticBlockDeclaration(tsNode, javaNode, closure) {
+        const body = tsNode.body;
+
+        const classStaticBlockDeclaration = new ClassStaticBlockDeclaration(javaNode, tsNode.pos, tsNode.end);
+        const javaBody = classStaticBlockDeclaration.body;
+        this.parseStatements(body, javaBody, classStaticBlockDeclaration.closure);
+
+        return classStaticBlockDeclaration;
     }
 
     /// 1 + 2;
@@ -1042,6 +1081,8 @@ class JavaParser {
 class CompileUtils {
     tsProgram;
 
+    tabSpace = '  ';
+
     constructor(tsProgram) {
         this.tsProgram = tsProgram;
     }
@@ -1162,7 +1203,7 @@ class CompileUtils {
         const functionClassName = this.getFunctionType(javaNode);
         const fullName = `${config.java.package}.FunctionInterface`;
         const project = javaNode.module.project;
-        const module = project.moduleMap[fullName];
+        const module = project.moduleMap.get(fullName);
         const functionMember = module.members.find(classNode => classNode.name === functionClassName);
         if (!functionMember) {
             const functionMember = this.#functionMemberMap[functionClassName];
@@ -1191,7 +1232,7 @@ class CompileUtils {
             closure = this.getClosureFromNode(closure);
         }
         if (closure.has(name)) {
-            return closure._variables[name];
+            return closure.variables[name];
         }
         if (!closure.isTop()) {
             const parent = closure.parent;
@@ -1204,7 +1245,7 @@ class CompileUtils {
             closure = this.getClosureFromNode(closure);
         }
         if (closure.has(name)) {
-            closure._variables[name] = declaration;
+            closure.variables[name] = declaration;
         }
         if (!closure.isTop()) {
             const parent = closure.parent;
@@ -1217,7 +1258,7 @@ class CompileUtils {
         if (closure instanceof ASTNode) {
             closure = this.getClosureFromNode(closure);
         }
-        closure._variables[name] = declaration;
+        closure.variables[name] = declaration;
     }
 
     getBlockFromNode(javaNode) {
@@ -1226,6 +1267,22 @@ class CompileUtils {
             return javaNode;
         }
         return this.getBlockFromNode(javaNode.parent);
+    }
+
+    get newLine() {
+        return `\n${this.indent}`;
+    }
+
+    indent = '';
+
+    increaseIndent() {
+        this.indent += this.tabSpace;
+        return this.indent;
+    }
+
+    decreaseIndent() {
+        this.indent = this.indent.slice(0, -this.tabSpace.length);
+        return this.indent;
     }
 }
 

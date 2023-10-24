@@ -8,6 +8,7 @@ module.exports = function (serviceOptions) {
     const tsOptions = basePlugin.tsOptions;
 
     const parser = new Parser(tsOptions);
-    parser.parse();
+    const javaBundle = parser.parse();
+    javaBundle.generateBundle();
 }
 

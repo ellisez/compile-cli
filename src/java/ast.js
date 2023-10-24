@@ -3,7 +3,7 @@ class Closure {
 
     parent;
 
-    _variables = {};
+    variables = {};
 
     constructor(parent) {
         this.parent = parent;
@@ -15,7 +15,7 @@ class Closure {
     }
 
     has(name) {
-        return this._variables.hasOwnProperty(name);
+        return this.variables.hasOwnProperty(name);
     }
 
     isTop() {
@@ -33,7 +33,7 @@ class Closure {
     }
 
     local(name) {
-        return this._variables[name];
+        return this.variables[name];
     }
 }
 
@@ -82,22 +82,10 @@ class ASTNode {
 }
 
 class Project {
-    moduleMap = {};
+    moduleMap = new Map();
 
     compileUtils;
 
-}
-
-class Entity {
-    moduleSpecifier;
-    identifier;
-    type;// var | function | type
-
-    constructor(moduleSpecifier, identifier, type) {
-        this.moduleSpecifier = moduleSpecifier;
-        this.identifier = identifier;
-        this.type = type
-    }
 }
 
 //==============//
@@ -155,7 +143,11 @@ class ClassDeclaration extends Declaration {
         this.name = name;
         this.explicitType = name;
 
+        this.staticBlock = new ClassStaticBlockDeclaration(parent);
+
         if (parent) {
+            this.staticBlock.applyClosure();
+
             this.applyClosure();
             this.closure.var('this', this);
             this.closure.var(name, this);
@@ -170,6 +162,46 @@ class ClassDeclaration extends Declaration {
     forEachChild(cb) {
         cb(this.staticBlock);
         this.members.forEach(node => cb(node));
+    }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const newLine = compileUtils.newLine;
+
+        let classModifier = '';
+        if (this.accessor) {
+            classModifier += this.accessor;
+        }
+        if (this.isStatic) {
+            classModifier += ' static';
+        }
+        if (this.isFinal) {
+            classModifier += ' final';
+        }
+        classModifier += ' ';
+
+        const memberNewLine = compileUtils.increaseIndent();
+
+        const staticBlockCode = this.staticBlock.getText();
+        let staticBlockSegment = '';
+        if (staticBlockCode) {
+            staticBlockSegment = `${memberNewLine}${staticBlockCode}`;
+        }
+
+
+        let memberSegment = '';
+        for (let member of this.members) {
+            if (memberSegment) {
+                memberSegment += memberNewLine;
+            }
+            memberSegment += member.getText();
+        }
+        compileUtils.decreaseIndent();
+
+        if (memberSegment) {
+            memberSegment += newLine;
+        }
+        return `${classModifier}${this.name} {${staticBlockSegment}${memberSegment}}`;
     }
 }
 
@@ -197,9 +229,11 @@ class JavaModule extends ClassDeclaration {
         this.fullName = packageName + '.' + name;
         this.project = project;
         this.module = this;
+        this.staticBlock.module = this;
 
         this.accessor = 'public';
 
+        this.staticBlock.applyClosure();
         this.applyClosure(name);
         this.closure.var('this', this);
         this.closure.var(name, this);
@@ -210,6 +244,24 @@ class JavaModule extends ClassDeclaration {
         this.members.forEach(node => cb(node));
     }
 
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const newLine = compileUtils.newLine;
+
+        const packageSegment = `package ${this.packageName};`;
+
+        let importSection = '';
+        for (let importModule of this.imports) {
+            if (importSection) {
+                importSection += newLine;
+            }
+            importSection += `import ${importModule};`
+        }
+
+        const classSection = super.getText();
+
+        return `${packageSegment}${newLine}${newLine}${importSection}${newLine}${classSection}`;
+    }
 }
 
 class Identifier extends ASTNode {
@@ -265,7 +317,7 @@ class ConstructorDeclaration extends MemberDeclaration {
     constructor(parent, pos, end) {
         super(parent, pos, end);
         this.name = parent.name;
-        this.applyClosure('');
+        this.applyClosure();
     }
 
     addParameter(parameter) {
@@ -372,16 +424,30 @@ class VariableDeclaration extends Declaration {
     }
 }
 
-class ClassStaticBlockDeclaration extends Declaration {
-    parent;
+class ClassStaticBlockDeclaration extends ASTNode {
     body;
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
+        this.body = new Block(parent);
+        if (parent) {
+            this.applyClosure();
+        }
     }
 
     forEachChild(cb) {
         cb(this.body);
+    }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const newLine = compileUtils.newLine;
+        const statementNewLine = compileUtils.increaseIndent();
+        compileUtils.decreaseIndent();
+        if (this.body.statements.length > 0) {
+            return `static {${statementNewLine}${this.body.getText()}${newLine}`;
+        }
+        return super.getText();
     }
 }
 
