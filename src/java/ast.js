@@ -1,3 +1,84 @@
+//=============//
+//    print    //
+//=============//
+class Printer {
+    compileUtils;
+    #text = '';
+
+    constructor(compileUtils) {
+        this.compileUtils = compileUtils;
+    }
+
+    getText() {
+        return this.#text;
+    }
+
+    code(code, pre = '') {
+        if (code) {
+            if (this.#text) {
+                this.#text += pre;
+            }
+            this.#text += code;
+        }
+    }
+
+    write(node, pre = ' ') {
+        if (node) {
+            let code = node.toString();
+            if (node instanceof ASTNode) {
+                code = node.getText();
+            }
+            this.code(code, pre);
+        }
+    }
+
+    writeln(node) {
+        const newLine = this.compileUtils.newLine;
+        this.write(node, newLine);
+    }
+
+    writeModifiers(member) {
+        if (member.accessor) {
+            this.write(member.accessor);
+        }
+        if (member.isStatic) {
+            this.write('static');
+        }
+        if (member.isFinal) {
+            this.write('final');
+        }
+    }
+
+    writeParams(func) {
+        const paramPrinter = new Printer();
+        for (let parameter of func.parameters) {
+            paramPrinter.write(parameter.getText(), ', ');
+        }
+        this.code('(');
+        this.code(paramPrinter.getText());
+        this.code(')');
+    }
+
+    writeBody(func) {
+        if (func.body) {
+            this.code('{');
+            this.compileUtils.increaseIndent();
+            const bodySegment = func.body.getText();
+            if (func.body.statements.length) {
+                this.writeln(bodySegment);
+                this.compileUtils.decreaseIndent();
+                this.writeln('}');
+            } else {
+                this.compileUtils.decreaseIndent();
+                this.code('}');
+            }
+        }
+    }
+}
+
+//============//
+//  ASTNode  //
+//===========//
 class Closure {
     module;
 
@@ -166,43 +247,32 @@ class ClassDeclaration extends Declaration {
 
     getText() {
         const compileUtils = this.module.project.compileUtils;
-        const newLine = compileUtils.newLine;
 
-        let classModifier = '';
-        if (this.accessor) {
-            classModifier += this.accessor;
-        }
-        if (this.isStatic) {
-            classModifier += ' static';
-        }
-        if (this.isFinal) {
-            classModifier += ' final';
-        }
-        classModifier += ' ';
+        const printer = new Printer(compileUtils);
+        printer.writeModifiers(this);
+
+        printer.write('class');
+
+        printer.write(this.name);
+
+        printer.write('{');
 
         compileUtils.increaseIndent();
-        const memberNewLine = compileUtils.newLine;
-
         const staticBlockCode = this.staticBlock.getText();
-        let staticBlockSegment = '';
-        if (staticBlockCode) {
-            staticBlockSegment = memberNewLine + staticBlockCode;
-        }
+        printer.writeln(staticBlockCode);
 
-
-        let memberSegment = '';
         for (let member of this.members) {
-            const memberCode = member.getText();
-            if (memberCode) {
-                memberSegment += memberNewLine + memberCode;
-            }
+            printer.writeln(member);
         }
         compileUtils.decreaseIndent();
 
-        if (memberSegment) {
-            memberSegment += newLine;
+        if (staticBlockCode || this.members.length) {
+            printer.writeln('}');
+        } else {
+            printer.code('}');
         }
-        return `${classModifier}class ${this.name} {${staticBlockSegment}${memberSegment}}`;
+
+        return printer.getText();
     }
 }
 
@@ -247,21 +317,24 @@ class JavaModule extends ClassDeclaration {
 
     getText() {
         const compileUtils = this.module.project.compileUtils;
-        const newLine = compileUtils.newLine;
+        const printer = new Printer(compileUtils);
 
-        const packageSegment = `package ${this.packageName};`;
+        printer.writeln(`package ${this.packageName};`);
+        printer.writeln();
 
-        let importSection = '';
+        let hasImport = false;
         for (let importModule of this.imports) {
-            if (importSection) {
-                importSection += newLine;
-            }
-            importSection += `import ${importModule};`
+            printer.writeln(`import ${importModule};`);
+            hasImport = true;
+        }
+        if (hasImport) {
+            printer.writeln();
         }
 
         const classSection = super.getText();
+        printer.writeln(classSection);
 
-        return `${packageSegment}${newLine}${newLine}${importSection}${newLine}${newLine}${classSection}`;
+        return printer.getText();
     }
 }
 
@@ -299,6 +372,24 @@ class PropertyDeclaration extends MemberDeclaration {
     forEachChild(cb) {
         cb(this.initializer);
     }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+        printer.writeModifiers(this);
+
+        printer.write(this.type);
+
+        printer.write(this.name);
+
+        if (this.initializer) {
+            printer.write('=');
+            printer.write(this.initializer.getText());
+        }
+        printer.code(';');
+
+        return printer.getText();
+    }
 }
 
 function isFunction(node) {
@@ -335,6 +426,21 @@ class ConstructorDeclaration extends MemberDeclaration {
         this.parameters.forEach(node => cb(node));
         cb(this.body);
     }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+
+        printer.writeModifiers(this);
+
+        printer.write(this.name);
+
+        printer.writeParams(this);
+
+        printer.writeBody(this);
+
+        return printer.getText();
+    }
 }
 
 class MethodDeclaration extends MemberDeclaration {
@@ -363,6 +469,23 @@ class MethodDeclaration extends MemberDeclaration {
     forEachChild(cb) {
         this.parameters.forEach(node => cb(node));
         cb(this.body);
+    }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+
+        printer.writeModifiers(this);
+
+        printer.write(this.type);
+
+        printer.write(this.name);
+
+        printer.writeParams(this);
+
+        printer.writeBody(this);
+
+        return printer.getText();
     }
 }
 
@@ -442,14 +565,23 @@ class ClassStaticBlockDeclaration extends ASTNode {
 
     getText() {
         const compileUtils = this.module.project.compileUtils;
-        const newLine = compileUtils.newLine;
-        compileUtils.increaseIndent();
-        const statementNewLine = compileUtils.newLine;
-        compileUtils.decreaseIndent();
+        const printer = new Printer(compileUtils);
+
         if (this.body.statements.length > 0) {
-            return `static {${statementNewLine}${this.body.getText()}${newLine}`;
+            printer.write('static');
+            printer.write('{');
+            compileUtils.increaseIndent();
+            const bodyCode = this.body.getText();
+            if (bodyCode) {
+                printer.writeln(bodyCode);
+                compileUtils.decreaseIndent();
+                printer.writeln('}');
+            } else {
+                compileUtils.decreaseIndent();
+                printer.code('}');
+            }
         }
-        return super.getText();
+        return printer.getText();
     }
 }
 

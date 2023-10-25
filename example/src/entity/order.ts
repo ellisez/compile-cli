@@ -7,7 +7,7 @@ export default class Order {
 
     consumer: Consumer;
 
-    itemList: OrderItem[];
+    itemList: Array<OrderItem>;
 
     discount: bigint;
     total: number;

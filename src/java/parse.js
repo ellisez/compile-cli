@@ -1141,6 +1141,10 @@ class CompileUtils {
     parseType(tsNode) {
         if (!tsNode) return;
 
+        if (tsNode.kind === ts.SyntaxKind.ArrayType) {
+            const elementType = this.parseType(tsNode.elementType);
+            return elementType + '[]';
+        }
         const typeChecker = this.tsProgram.getTypeChecker();
         const type = typeChecker.getTypeAtLocation(tsNode);
         const typeToString = typeChecker.typeToString(type);
