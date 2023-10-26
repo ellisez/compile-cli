@@ -65,6 +65,7 @@ const {
     NumericLiteral,
     StringLiteral,
     RegularExpressionLiteral,
+    ArrayLiteralExpression,
     isFunction,
 } = require("./ast.js");
 const { NewExpression } = require("./ast");
@@ -110,7 +111,29 @@ class JavaParser {
 
     compileUtils;
 
-    entityMap = {
+    typeResolver(tsType, module) {
+        if (tsType)
+            switch (tsType) {
+                case 'number':
+                    return 'double';
+                case 'bigint':
+                    return 'int';
+                case 'string':
+                    return 'String';
+                case 'Set':
+                    module.imports.add('java.util.HashSet');
+                    return 'HashSet';
+                case 'Map':
+                    module.imports.add('java.util.HashMap');
+                    return 'HashMap';
+                case 'Array':
+                    module.imports.add('java.util.ArrayList');
+                    return 'ArrayList';
+            }
+        return tsType;
+    }
+
+    entityResolver = {
         TSPropertyAccessExpression(tsNode, javaNode, closure) {
             const name = tsNode.name;
             const expression = tsNode.expression;
@@ -125,7 +148,7 @@ class JavaParser {
                 functionDeclaration.parameters = ['param1'];
                 functionDeclaration.typeParameters = ['string'];
 
-                printIdentifier.implicitType = this.compileUtils.applyFunctionInterface(functionDeclaration);
+                printIdentifier.implicitType = this.compileUtils.importFunctionType(functionDeclaration);
 
                 systemAccess.name = printIdentifier;
 
@@ -157,12 +180,17 @@ class JavaParser {
                 case 'Set':
                     identifier.implicitType = 'Set';
                     identifier.text = 'Set';
-                    module.push('java.util.Set');
+                    module.imports.add('java.util.Set');
                     break;
                 case 'Map':
                     identifier.implicitType = 'HashMap';
                     identifier.text = 'HashMap';
-                    module.push('java.util.HashMap');
+                    module.imports.add('java.util.HashMap');
+                    break;
+                case 'Array':
+                    identifier.implicitType = 'ArrayList';
+                    identifier.text = 'ArrayList';
+                    module.imports.add('java.util.ArrayList');
                     break;
             }
             return identifier;
@@ -287,7 +315,7 @@ class JavaParser {
         propertyDeclaration.isStatic = isStatic === undefined ? false : isStatic;
         propertyDeclaration.isFinal = isFinal === undefined ? false : isFinal;
 
-        propertyDeclaration.explicitType = this.compileUtils.parseType(type);
+        propertyDeclaration.explicitType = this.TSType(type, propertyDeclaration, closure);
 
         const javaInitializer = this.visitNode(initializer, propertyDeclaration, closure);
         if (javaInitializer) {
@@ -310,7 +338,7 @@ class JavaParser {
         methodDeclaration.isStatic = isStatic === undefined ? false : isStatic;
         methodDeclaration.isFinal = isFinal === undefined ? false : isFinal;
 
-        methodDeclaration.explicitReturnType = this.compileUtils.parseType(type);
+        methodDeclaration.explicitReturnType = this.TSType(type, methodDeclaration, methodDeclaration.closure);
 
         for (let parameter of parameters) {
             const javaParameter = this.TSParameter(parameter, methodDeclaration, methodDeclaration.closure);
@@ -331,7 +359,7 @@ class JavaParser {
                          }) {
         const lambdaFunction = new LambdaFunction(javaNode, pos, end);
 
-        lambdaFunction.explicitReturnType = this.compileUtils.parseType(type);
+        lambdaFunction.explicitReturnType = this.TSType(type, lambdaFunction, lambdaFunction.closure);
 
         for (let parameter of parameters) {
             const javaParameter = this.TSParameter(parameter, lambdaFunction, lambdaFunction.closure);
@@ -351,22 +379,51 @@ class JavaParser {
         for (let statement of statements) {
             const javaStatement = this.visitNode(statement, block, closure);
             if (javaStatement) {
-                if (javaStatement instanceof VariableDeclarationList) {
-                    for (let item of javaStatement.declarations) {
-                        block.statements.push(item);
-                    }
-                } else {
-                    block.statements.push(javaStatement);
-                }
+                block.statements.push(javaStatement);
             }
         }
     }
 
-    /// a();
-    /// b = a;
-    /// a = 1;
+    /// a: Array<number>
+    TSType(tsNode, javaNode, closure) {
+        if (!tsNode) return;
+
+        let type = '';
+        const module = javaNode.module;
+        switch (tsNode.kind) {
+            case ts.SyntaxKind.Identifier:
+                type = tsNode.escapedText;
+                break;
+            case ts.SyntaxKind.ArrayType:
+                const elementType = this.TSType(tsNode.elementType, javaNode, closure);
+                return elementType + '[]';
+            case ts.SyntaxKind.TypeReference:// Array<string>
+                const typeName = this.TSType(tsNode.typeName, javaNode, closure);
+                const typeArguments = tsNode.typeArguments;
+                if (typeArguments) {
+                    let typeArgumentText = '';
+                    for (let typeArgument of typeArguments) {
+                        if (typeArgumentText) {
+                            typeArgumentText += ', ';
+                        }
+                        typeArgumentText += this.TSType(typeArgument, javaNode, closure);
+                    }
+                    return `${typeName}<${typeArgumentText}>`;
+                }
+                return typeName;
+            default:
+                type = this.compileUtils.parseType(tsNode);
+        }
+
+        return this.typeResolver(type, module);
+    }
+
+
+	///a();
+	///b = a;
+	///a = 1;
     TSIdentifier(tsNode, javaNode, closure) {
-        const tryEntity = this.entityMap['TSIdentifier'];
+        const tryEntity = this.entityResolver['TSIdentifier'];
         if (tryEntity) {
             const entity = tryEntity.call(this, tsNode, javaNode, closure);
             if (entity) return entity;
@@ -390,9 +447,9 @@ class JavaParser {
         return identifier;
     }
 
-    /// a.b
+	///a.b
     TSPropertyAccessExpression(tsNode, javaNode, closure) {
-        const tryEntity = this.entityMap['TSPropertyAccessExpression'];
+        const tryEntity = this.entityResolver['TSPropertyAccessExpression'];
         if (tryEntity) {
             const entity = tryEntity.call(this, tsNode, javaNode, closure);
             if (entity) return entity;
@@ -407,20 +464,29 @@ class JavaParser {
         return propertyAccessExpression;
     }
 
+	///let arr = [1,2,3];
     TSArrayLiteralExpression(tsNode, javaNode, closure) {
-        const tryEntity = this.entityMap['TSArrayLiteralExpression'];
+        const tryEntity = this.entityResolver['TSArrayLiteralExpression'];
         if (tryEntity) {
             const entity = tryEntity.call(this, tsNode, javaNode, closure);
             if (entity) return entity;
         }
+
+        const arrayLiteralExpression = new ArrayLiteralExpression(javaNode, tsNode.pos, tsNode.end);
+        const elements = tsNode.elements;
+        for (let element of elements) {
+            const javaElement = this.visitNode(element, arrayLiteralExpression, closure);
+            arrayLiteralExpression.elements.push(javaElement);
+        }
+
     }
 
-    /// this.a
+	///this.a
     TSThisKeyword(tsNode, javaNode, closure) {
         return new ThisKeyword(javaNode, tsNode.pos, tsNode.end);
     }
 
-    /// import a from 'b'
+	///import a from 'b'
     TSImportDeclaration(tsNode, javaNode, closure) {
         const importClause = tsNode.importClause;
         const moduleSpecifier = tsNode.moduleSpecifier.text;
@@ -432,7 +498,7 @@ class JavaParser {
         let modulePath = path.resolve(fileDir, moduleSpecifier);
         const modulePackage = toClassFullName(modulePath);
 
-        currentModule.imports.push(modulePackage);
+        currentModule.imports.add(modulePackage);
 
         const module = this.project.moduleMap.get(modulePackage);
         if (!module) return;
@@ -471,7 +537,7 @@ class JavaParser {
         }
     }
 
-    /// export default a = 1;
+	///export default a = 1;
     TSExportAssignment(tsNode, javaNode, closure) {
         const expression = tsNode.expression;
 
@@ -575,20 +641,23 @@ class JavaParser {
     TSVariableStatement(tsNode, javaNode, closure) {
         const declarationList = tsNode.declarationList;
 
-        const variableStatement = new VariableStatement(javaNode, tsNode.pos, tsNode.end);
-        variableStatement.declarationList = this.TSVariableDeclarationList(declarationList, javaNode, closure);
+        let { isExport, isDefault, accessor, isStatic } = this.compileUtils.parseModifiers(tsNode);
 
-        if (variableStatement.declarationList) {
-            return variableStatement;
-        }
+        const variableStatement = new VariableStatement(javaNode, tsNode.pos, tsNode.end);
+        variableStatement.accessor = accessor;
+        variableStatement.isStatic = isStatic;
+        variableStatement.declarationList = this.TSVariableDeclarationList(declarationList, variableStatement, closure);
+
+        return variableStatement;
     }
 
     /// let a=1, b=2;
     TSVariableDeclarationList(tsNode, javaNode, closure) {
         const declarationList = tsNode;
-        const statement = declarationList.parent;
+        const parentNode = javaNode.parent;
 
-        let { isExport, isDefault, accessor, isStatic } = this.compileUtils.parseModifiers(statement);
+        const accessor = javaNode.accessor;
+        const isStatic = javaNode.isStatic;
 
         let isFinal = false;
         switch (declarationList.flags) {
@@ -597,7 +666,7 @@ class JavaParser {
                 break;
         }
 
-        if (javaNode instanceof JavaModule) {
+        if (parentNode instanceof JavaModule) {
             for (let declaration of declarationList.declarations) {
                 const name = declaration.name.escapedText;
                 const initializer = declaration.initializer;
@@ -605,11 +674,11 @@ class JavaParser {
 
                 const propertyDeclaration = this.createPropertyDeclaration({
                     accessor, isStatic, isFinal, type, name, initializer,
-                    javaNode, pos: declaration.pos, end: declaration.end, closure
+                    javaNode: parentNode, pos: declaration.pos, end: declaration.end, closure
                 });
 
                 propertyDeclaration.initializer = this.visitNode(initializer, propertyDeclaration, closure);
-                javaNode.addMember(propertyDeclaration);
+                parentNode.addMember(propertyDeclaration);
             }
         } else {
             const variableDeclarationList = new VariableDeclarationList(javaNode, javaNode.pos, javaNode.end);
@@ -621,7 +690,7 @@ class JavaParser {
                 const variableDeclaration = new VariableDeclaration(javaNode, name, declaration.pos, declaration.end);
 
                 variableDeclaration.isFinal = isFinal;
-                variableDeclaration.explicitType = this.compileUtils.parseType(type);
+                variableDeclaration.explicitType = this.TSType(type, variableDeclaration, closure);
 
                 variableDeclaration.initializer = this.visitNode(initializer, variableDeclaration, closure);
                 closure.var(name, variableDeclaration);
@@ -635,7 +704,7 @@ class JavaParser {
         }
     }
 
-    /// new A();
+	///new A();
     TSNewExpression(tsNode, javaNode, closure) {
         const expression = tsNode.expression;
         const argumentNodes = tsNode.arguments;
@@ -649,7 +718,7 @@ class JavaParser {
         return newExpression;
     }
 
-    /// a(1, 2);
+	///a(1, 2);
     TSCallExpression(tsNode, javaNode, closure) {
         const expression = tsNode.expression;
         const argumentNodes = tsNode.arguments;
@@ -663,7 +732,7 @@ class JavaParser {
         return callExpression;
     }
 
-    /// try {} catch(e) {} finally {}
+	///try {} catch(e) {} finally {}
     TSTryStatement(tsNode, javaNode, closure) {
         const tryBlock = tsNode.tryBlock;
         const catchClause = tsNode.catchClause;
@@ -677,7 +746,7 @@ class JavaParser {
         return tryStatement;
     }
 
-    /// catch(e) {}
+	///catch(e) {}
     TSCatchClause(tsNode, javaNode, closure) {
         const variableDeclaration = tsNode.variableDeclaration;
         const name = variableDeclaration.name.escapedText;
@@ -690,7 +759,7 @@ class JavaParser {
         return catchClause;
     }
 
-    /// function a() {}
+	///function a() {}
     TSFunctionDeclaration(tsNode, javaNode, closure) {
         const name = tsNode.name ? tsNode.name.escapedText : '';
         const type = tsNode.type;
@@ -764,7 +833,7 @@ class JavaParser {
         }
     }
 
-    /// ++i
+	///++i
     TSPrefixUnaryExpression(tsNode, javaNode, closure) {
         const operand = tsNode.operand;
         const operator = tsNode.operator;
@@ -776,7 +845,7 @@ class JavaParser {
         return prefixUnaryExpression;
     }
 
-    /// i++
+	///i++
     TSPostfixUnaryExpression(tsNode, javaNode, closure) {
         const operand = tsNode.operand;
         const operator = tsNode.operator;
@@ -788,7 +857,7 @@ class JavaParser {
         return postfixUnaryExpression;
     }
 
-    /// for(let i=0; i< 3; i++) {}
+	///for(let i=0; i< 3; i++) {}
     TSForStatement(tsNode, javaNode, closure) {
         const initializer = tsNode.initializer;
         const condition = tsNode.condition;
@@ -798,7 +867,8 @@ class JavaParser {
         const forStatement = new ForStatement(javaNode, tsNode.pos, tsNode.end);
         const javaInitializer = this.visitNode(initializer, forStatement, forStatement.closure);
         if (javaInitializer) {
-            if (javaInitializer instanceof VariableDeclarationList) {
+            if (javaInitializer instanceof VariableStatement &&
+                javaInitializer.declarationList.declarations.length > 1) {
                 throw new Error(`'${initializer.getText()}' is not allowed in a compound declaration`);
             } else {
                 forStatement.initializer = javaInitializer;
@@ -814,7 +884,7 @@ class JavaParser {
         return forStatement;
     }
 
-    /// for(let key in object) {}
+	///for(let key in object) {}
     TSForInStatement(tsNode, javaNode, closure) {
         const initializer = tsNode.initializer;
         const expression = tsNode.expression;
@@ -824,7 +894,8 @@ class JavaParser {
         const forInStatement = new ForInStatement(javaNode, tsNode.pos, tsNode.end);
         const javaInitializer = this.visitNode(initializer, forInStatement, forInStatement.closure);
         if (javaInitializer) {
-            if (javaInitializer instanceof VariableDeclarationList) {
+            if (javaInitializer instanceof VariableStatement &&
+                javaInitializer.declarationList.declarations.length > 1) {
                 throw new Error(`'${initializer.getText()}' is not allowed in a compound declaration`);
             } else {
                 forInStatement.initializer = javaInitializer;
@@ -838,7 +909,7 @@ class JavaParser {
         return forInStatement;
     }
 
-    /// for(let item of array) {}
+	///for(let item of array) {}
     TSForOfStatement(tsNode, javaNode, closure) {
         const initializer = tsNode.initializer;
         const expression = tsNode.expression;
@@ -848,7 +919,8 @@ class JavaParser {
         const forOfStatement = new ForOfStatement(javaNode, tsNode.pos, tsNode.end);
         const javaInitializer = this.visitNode(initializer, forOfStatement, forOfStatement.closure);
         if (javaInitializer) {
-            if (javaInitializer instanceof VariableDeclarationList) {
+            if (javaInitializer instanceof VariableStatement &&
+                javaInitializer.declarationList.declarations.length > 1) {
                 throw new Error(`'${initializer.getText()}' is not allowed in a compound declaration`);
             } else {
                 forOfStatement.initializer = javaInitializer;
@@ -862,7 +934,7 @@ class JavaParser {
         return forOfStatement;
     }
 
-    /// if (a == 1) {} else if (a == 2) {} else {}
+	///if (a == 1) {} else if (a == 2) {} else {}
     TSIfStatement(tsNode, javaNode, closure) {
         const expression = tsNode.expression;
         const thenStatement = tsNode.thenStatement;
@@ -881,7 +953,7 @@ class JavaParser {
         return ifStatement;
     }
 
-    /// switch(a) {}
+	///switch(a) {}
     TSSwitchStatement(tsNode, javaNode, closure) {
         const expression = tsNode.expression;
         const caseBlock = tsNode.caseBlock;
@@ -900,7 +972,7 @@ class JavaParser {
         return switchStatement;
     }
 
-    /// switch(a) { case 1: }
+	///switch(a) { case 1: }
     TSCaseClause(tsNode, javaNode, closure) {
         const expression = tsNode.expression;
 
@@ -911,7 +983,7 @@ class JavaParser {
         return caseClause;
     }
 
-    /// throw error;
+	///throw error;
     TSThrowStatement(tsNode, javaNode, closure) {
         const expression = tsNode.expression;
 
@@ -922,7 +994,7 @@ class JavaParser {
 
     }
 
-    /// switch(a) { default: }
+	///switch(a) { default: }
     TSDefaultClause(tsNode, javaNode, closure) {
 
         const defaultClause = new DefaultClause(javaNode, tsNode.pos, tsNode.end);
@@ -931,7 +1003,7 @@ class JavaParser {
         return defaultClause;
     }
 
-    /// return a;
+	///return a;
     TSReturnStatement(tsNode, javaNode, closure) {
         const expression = tsNode.expression;
         const pos = tsNode.pos;
@@ -948,27 +1020,27 @@ class JavaParser {
         return returnStatement;
     }
 
-    /// break;
+	///break;
     TSBreakStatement(tsNode, javaNode, closure) {
         return new BreakStatement(javaNode, tsNode.pos, tsNode.end);
     }
 
-    /// continue;
+	///continue;
     TSContinueStatement(tsNode, javaNode, closure) {
         return new ContinueStatement(javaNode, tsNode.pos, tsNode.end);
     }
 
-    /// a=1+2;
-    /// a();
-    /// new A();
-    /// ++i;
-    /// i--;
-    /// a.b;
+	///a=1+2;
+	///a();
+	///new A();
+	///++i;
+	///i--;
+	///a.b;
     TSExpressionStatement(tsNode, javaNode, closure) {
         return this.visitNode(tsNode.expression, javaNode, closure);
     }
 
-    /// class A { constructor() {} }
+	///class A { constructor() {} }
     TSConstructor(tsNode, javaNode, closure) {
         const parameters = tsNode.parameters;
         const body = tsNode.body;
@@ -994,7 +1066,7 @@ class JavaParser {
         constructorDeclaration.implicitReturnType = body.implicitReturnType;
     }
 
-    /// class A { private int b = 1; }
+	///class A { private int b = 1; }
     TSPropertyDeclaration(tsNode, javaNode, closure) {
         const name = tsNode.name.escapedText;
         const type = tsNode.type;
@@ -1010,7 +1082,7 @@ class JavaParser {
         })
     }
 
-    /// class A { public int b(double c) {} }
+	///class A { public int b(double c) {} }
     TSMethodDeclaration(tsNode, javaNode, closure) {
         const name = tsNode.name.escapedText;
         const type = tsNode.type;
@@ -1027,8 +1099,8 @@ class JavaParser {
         });
     }
 
-    /// function fun() {}
-    /// class A { fun() {} }
+	///function fun() {}
+	///class A { fun() {} }
     TSBlock(tsNode, javaNode, closure) {
         if (!tsNode) return;
         const pos = tsNode.pos;
@@ -1040,8 +1112,8 @@ class JavaParser {
         return block;
     }
 
-    /// function a(p=2) {}
-    /// class A { fun(p=2) {} }
+	///function a(p=2) {}
+	///class A { fun(p=2) {} }
     TSParameter(tsNode, javaNode, closure) {
         const name = tsNode.name;
         const type = tsNode.type;
@@ -1052,39 +1124,39 @@ class JavaParser {
 
         const parameterDeclaration = new ParameterDeclaration(javaNode, name, pos, end);
 
-        parameterDeclaration.explicitType = this.compileUtils.parseType(type);
+        parameterDeclaration.explicitType = this.TSType(type, parameterDeclaration, closure);
 
         parameterDeclaration.initializer = this.visitNode(initializer, parameterDeclaration, closure);
 
         return parameterDeclaration;
     }
 
-    /// true
+	///true
     TSTrueKeyword(tsNode, javaNode, closure) {
         return new TrueKeyword(javaNode, tsNode.pos, tsNode.end);
     }
 
-    /// false
+	///false
     TSFalseKeyword(tsNode, javaNode, closure) {
         return new FalseKeyword(javaNode, tsNode.pos, tsNode.end);
     }
 
-    /// a = 1;
+	///a = 1;
     TSNumericLiteral(tsNode, javaNode, closure) {
         return new NumericLiteral(javaNode, tsNode.text, tsNode.pos, tsNode.end);
     }
 
-    /// a = 1n;
+	///a = 1n;
     TSBigIntLiteral(tsNode, javaNode, closure) {
         return new NumericLiteral(javaNode, tsNode.text, tsNode.pos, tsNode.end);
     }
 
-    /// a = 'string';
+	///a = 'string';
     TSStringLiteral(tsNode, javaNode, closure) {
         return new StringLiteral(javaNode, tsNode.text, tsNode.pos, tsNode.end);
     }
 
-    /// /^\d{11}$/
+	////^\d{11}$/
     TSRegularExpressionLiteral(tsNode, javaNode, closure) {
         return new RegularExpressionLiteral(javaNode, tsNode.text, tsNode.pos, tsNode.end);
     }
@@ -1141,20 +1213,16 @@ class CompileUtils {
     parseType(tsNode) {
         if (!tsNode) return;
 
-        if (tsNode.kind === ts.SyntaxKind.ArrayType) {
-            const elementType = this.parseType(tsNode.elementType);
-            return elementType + '[]';
-        }
         const typeChecker = this.tsProgram.getTypeChecker();
         const type = typeChecker.getTypeAtLocation(tsNode);
         const typeToString = typeChecker.typeToString(type);
 
-        return this.javaType(typeToString);
+        return typeToString;
     }
 
     parseOperator(tsNode) {
         if (!tsNode) return;
-        return tsNode.getText();
+        return this.parseUnaryOperator(tsNode.kind);
     }
 
     parseUnaryOperator(operator) {
@@ -1171,19 +1239,6 @@ class CompileUtils {
                 return '~'
             case ts.SyntaxKind.ExclamationToken:
                 return '!'
-        }
-    }
-
-    javaType(tsType) {
-        switch (tsType) {
-            case 'number':
-                return 'double';
-            case 'bigint':
-                return 'int';
-            case 'string':
-                return 'String';
-            default:
-                return tsType;
         }
     }
 
@@ -1216,16 +1271,22 @@ class CompileUtils {
         return 'void';
     }
 
-    applyFunctionInterface(javaNode) {
-        const functionClassName = this.getFunctionType(javaNode);
+    importFunctionType(javaNode, module) {
+        let functionClassName = javaNode;
+        if (javaNode instanceof ASTNode) {
+            functionClassName = this.getFunctionType(javaNode);
+            module = javaNode.module;
+        }
+        const project = module.project;
         const fullName = `${config.java.package}.FunctionInterface`;
-        const project = javaNode.module.project;
-        const module = project.moduleMap.get(fullName);
-        const functionMember = module.members.find(classNode => classNode.name === functionClassName);
+        const functionModule = project.moduleMap.get(fullName);
+        const functionMember = functionModule.members.find(classNode => classNode.name === functionClassName);
         if (!functionMember) {
             const functionMember = this.#functionMemberMap[functionClassName];
             functionMember.addMember(functionMember);
         }
+        const importFunction = `${fullName}.${functionClassName}`;
+        module.imports.add(importFunction);
         return functionClassName;
     }
 

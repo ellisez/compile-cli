@@ -12,7 +12,7 @@ export default class Order {
     discount: bigint;
     total: number;
 
-    isPaid: false;
+    isPaid: boolean = false;
 
     toString(): string {
         let code = '';

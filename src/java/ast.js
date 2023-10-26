@@ -287,7 +287,7 @@ class MemberDeclaration extends Declaration {
 
 class JavaModule extends ClassDeclaration {
     project;
-    imports = [];
+    imports = new Set();
     packageName;
 
     isResolved = false;
@@ -383,8 +383,7 @@ class PropertyDeclaration extends MemberDeclaration {
         printer.write(this.name);
 
         if (this.initializer) {
-            printer.write('=');
-            printer.write(this.initializer.getText());
+            printer.write(this.initializer.getText(), ' = ');
         }
         printer.code(';');
 
@@ -477,7 +476,7 @@ class MethodDeclaration extends MemberDeclaration {
 
         printer.writeModifiers(this);
 
-        printer.write(this.type);
+        printer.write(this.returnType);
 
         printer.write(this.name);
 
@@ -648,7 +647,7 @@ class ExpressionStatement extends Statement {
 }
 
 class ArrayLiteralExpression extends Statement {
-    elements;
+    elements = [];
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -657,6 +656,8 @@ class ArrayLiteralExpression extends Statement {
 
 class VariableStatement extends Statement {
 
+    accessor;
+    isStatic;
     declarationList;
 
     constructor(parent, pos, end) {
@@ -1262,6 +1263,7 @@ module.exports = {
     BigIntLiteral,
     StringLiteral,
     RegularExpressionLiteral,
+    ArrayLiteralExpression,
     isDeclaration,
     isFunction,
 }
