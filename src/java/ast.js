@@ -41,6 +41,14 @@ class Printer {
         }
     }
 
+    writeType(type, defaultValue = '') {
+        if (type) {
+            this.write(type.getText());
+            return;
+        }
+        this.write(defaultValue);
+    }
+
     writeModifiers(member) {
         if (member.accessor) {
             this.write(member.accessor);
@@ -53,9 +61,9 @@ class Printer {
         }
     }
 
-    writeParams(func) {
+    writeParams(parameters) {
         const paramPrinter = new Printer();
-        for (let parameter of func.parameters) {
+        for (let parameter of parameters) {
             paramPrinter.write(parameter.getText(), ', ');
         }
         this.code('(');
@@ -63,12 +71,12 @@ class Printer {
         this.code(')');
     }
 
-    writeBody(func) {
-        if (func.body) {
-            this.code('{');
+    writeBody(body) {
+        if (body) {
+            this.write('{');
             this.compileUtils.increaseIndent();
-            const bodySegment = func.body.getText();
-            if (func.body.statements.length) {
+            const bodySegment = body.getText();
+            if (body.statements.length) {
                 this.writeln(bodySegment);
                 this.compileUtils.decreaseIndent();
                 this.writeln('}');
@@ -76,6 +84,18 @@ class Printer {
                 this.compileUtils.decreaseIndent();
                 this.code('}');
             }
+        }
+    }
+
+    writeArguments(args) {
+        if (args) {
+            const paramPrinter = new Printer();
+            for (let arg of args) {
+                paramPrinter.write(arg.getText(), ', ');
+            }
+            this.code('(');
+            this.code(paramPrinter.getText());
+            this.code(')');
         }
     }
 }
@@ -172,6 +192,62 @@ class Project {
 
 }
 
+//==============//
+// Declaration //
+//=============//
+class Type {
+
+    getText() {
+
+    }
+}
+class NormalType extends Type {
+    typeName;
+
+    typeArguments = [];
+
+    elementType;
+
+    constructor(typeName, typeArguments= []) {
+        super();
+        this.typeName = typeName;
+        this.typeArguments = typeArguments;
+    }
+
+    getText() {
+        let code = this.typeName;
+        if (this.typeArguments.length > 0) {
+            let typeArgumentCode = '';
+            for (let typeArgument of this.typeArguments) {
+                if (typeArgumentCode) {
+                    typeArgumentCode += ', ';
+                }
+                typeArgumentCode += typeArgument.getText();
+            }
+            code += `<${typeArgumentCode}>`;
+        }
+        return code;
+    }
+}
+class ArrayType extends Type {
+    elementType;
+
+    constructor(elementType) {
+        super();
+        this.elementType = elementType;
+    }
+
+    getText() {
+        return this.elementType + '[]';
+    }
+}
+
+const VoidType = new NormalType('void');
+const BooleanType = new NormalType('boolean');
+const IntType = new NormalType('int');
+const DoubleType = new NormalType('double');
+const StringType = new NormalType('String');
+const PatternType = new NormalType('Pattern');
 //==============//
 // Declaration //
 //=============//
@@ -369,7 +445,21 @@ class ImportDeclaration extends ASTNode {
 }
 
 class PropertyDeclaration extends MemberDeclaration {
-    initializer;
+    #initializer;
+
+    get initializer() {
+        return this.#initializer;
+    }
+
+    set initializer(value) {
+        this.#initializer = value;
+        if (value) {
+            const valueType = value.type;
+            if (valueType) {
+                this.implicitType = valueType;
+            }
+        }
+    }
 
     constructor(parent, name, pos, end) {
         super(parent, pos, end);
@@ -387,7 +477,7 @@ class PropertyDeclaration extends MemberDeclaration {
         const printer = new Printer(compileUtils);
         printer.writeModifiers(this);
 
-        printer.write(this.type);
+        printer.writeType(this.type, 'Object');
 
         printer.write(this.name);
 
@@ -409,7 +499,7 @@ function isFunction(node) {
 
 class ConstructorDeclaration extends MemberDeclaration {
     explicitReturnType;
-    implicitReturnType = 'void';
+    implicitReturnType = VoidType;
     typeParameters = [];
     parameters = [];
     body;
@@ -443,9 +533,9 @@ class ConstructorDeclaration extends MemberDeclaration {
 
         printer.write(this.name);
 
-        printer.writeParams(this);
+        printer.writeParams(this.parameters);
 
-        printer.writeBody(this);
+        printer.writeBody(this.body);
 
         return printer.getText();
     }
@@ -453,7 +543,7 @@ class ConstructorDeclaration extends MemberDeclaration {
 
 class MethodDeclaration extends MemberDeclaration {
     explicitReturnType;
-    implicitReturnType = 'void';
+    implicitReturnType = new NormalType(VoidType);
     typeParameters = [];
     parameters = [];
     body;
@@ -485,13 +575,13 @@ class MethodDeclaration extends MemberDeclaration {
 
         printer.writeModifiers(this);
 
-        printer.write(this.returnType);
+        printer.writeType(this.returnType);
 
         printer.write(this.name);
 
-        printer.writeParams(this);
+        printer.writeParams(this.parameters);
 
-        printer.writeBody(this);
+        printer.writeBody(this.body);
 
         return printer.getText();
     }
@@ -499,7 +589,7 @@ class MethodDeclaration extends MemberDeclaration {
 
 class FunctionDeclaration extends Declaration {
     explicitReturnType;
-    implicitReturnType = 'void';
+    implicitReturnType = VoidType;
     typeParameters = [];
     parameters = [];
     body;
@@ -540,10 +630,42 @@ class ParameterDeclaration extends Declaration {
     forEachChild(cb) {
         cb(this.initializer);
     }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+
+        printer.writeType(this.type);
+        printer.write(this.name);
+
+        if (this.initializer) {
+            const initializerCode = this.initializer.getText();
+            if (initializerCode) {
+                printer.write('=');
+                printer.write(initializerCode);
+            }
+        }
+
+        return printer.getText();
+    }
 }
 
 class VariableDeclaration extends Declaration {
-    initializer;
+    #initializer;
+
+    get initializer() {
+        return this.#initializer;
+    }
+
+    set initializer(value) {
+        this.#initializer = value;
+        if (value) {
+            const valueType = value.type;
+            if (valueType) {
+                this.implicitType = valueType;
+            }
+        }
+    }
 
     constructor(parent, name, pos, end) {
         super(parent, pos, end);
@@ -553,6 +675,27 @@ class VariableDeclaration extends Declaration {
 
     forEachChild(cb) {
         cb(this.initializer);
+    }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+
+        printer.writeModifiers(this);
+
+        printer.writeType(this.type, 'var');
+
+        printer.write(this.name);
+
+        if (this.initializer) {
+            const initializerCode = this.initializer.getText();
+            if (initializerCode) {
+                printer.write('=');
+                printer.write(initializerCode);
+            }
+        }
+
+        return printer.getText();
     }
 }
 
@@ -604,13 +747,25 @@ class VariableDeclarationList extends ASTNode {
     forEachChild(cb) {
         this.declarations.forEach(node => cb(node));
     }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+
+        for (let declaration of this.declarations) {
+            const declarationCode = declaration.getText();
+            printer.writeln(declarationCode);
+        }
+
+        return printer.getText();
+    }
 }
 
 //==============//
 //   Closure   //
 //=============//
 class Block extends ASTNode {
-    implicitReturnType = 'void';
+    implicitReturnType = VoidType;
     statements = [];
 
     constructor(parent, pos, end) {
@@ -644,6 +799,13 @@ class Block extends ASTNode {
             const statementCode = statement.getText();
             if (statementCode) {
                 printer.writeln(statementCode);
+                if (statement instanceof IterationStatement ||
+                    statement instanceof IfStatement ||
+                    statement instanceof TryStatement) {
+
+                } else {
+                    printer.code(';');
+                }
             }
         }
         return printer.getText();
@@ -687,6 +849,10 @@ class VariableStatement extends Statement {
 
     forEachChild(cb) {
         this.declarationList.forEach(node => cb(node));
+    }
+
+    getText() {
+        return this.declarationList.getText();
     }
 }
 
@@ -799,7 +965,18 @@ class ForInStatement extends IterationStatement {
 
 class ForOfStatement extends IterationStatement {
     initializer;
-    expression;
+    #expression;
+
+    get expression() {
+        return this.#expression;
+    }
+
+    set expression(value) {
+        this.#expression = value;
+        if (this.initializer && value.elementType) {
+            this.initializer.implicitType = value.elementType;
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -809,6 +986,21 @@ class ForOfStatement extends IterationStatement {
         cb(this.initializer);
         cb(this.expression);
         super.forEachChild(cb);
+    }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+
+        printer.write('for');
+        printer.write('(');
+        printer.code(this.initializer.getText());
+        printer.code(':');
+        printer.code(this.expression.getText());
+        printer.code(')');
+        printer.writeBody(this.statement);
+
+        return printer.getText();
     }
 }
 
@@ -850,7 +1042,6 @@ class ReturnStatement extends Statement {
         const expressionCode = this.expression.getText();
         if (expressionCode) {
             printer.write(expressionCode);
-            printer.code(';');
         }
         return printer.getText();
     }
@@ -1019,7 +1210,7 @@ class ParenthesizedExpression extends Expression {
 class LambdaFunction extends ASTNode {
     implicitType;
     explicitReturnType;
-    implicitReturnType = 'void';
+    implicitReturnType = VoidType;
     typeParameters = [];
     parameters = [];
     body;
@@ -1072,6 +1263,16 @@ class PrefixUnaryExpression extends Expression {
         cb(this.operator);
         cb(this.operand);
     }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+
+        printer.write(this.operator);
+        printer.code(this.operand.getText());
+
+        return printer.getText();
+    }
 }
 
 class PostfixUnaryExpression extends Expression {
@@ -1093,7 +1294,6 @@ class PostfixUnaryExpression extends Expression {
  */
 class CallExpression extends Expression {
     expression;
-    questionDotToken;
     typeArguments;
     arguments = [];
 
@@ -1104,6 +1304,17 @@ class CallExpression extends Expression {
     forEachChild(cb) {
         cb(this.expression);
         this.parameters.forEach(node => cb(node));
+    }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+
+        printer.write(this.expression.getText());
+
+        printer.writeArguments(this.arguments);
+
+        return printer.getText();
     }
 }
 
@@ -1209,7 +1420,7 @@ class Literal extends ASTNode {
 class TrueKeyword extends Literal {
 
     constructor(parent, pos, end) {
-        super(parent, 'boolean', 'true', pos, end);
+        super(parent, BooleanType, 'true', pos, end);
     }
 }
 
@@ -1217,7 +1428,7 @@ class TrueKeyword extends Literal {
 class FalseKeyword extends Literal {
 
     constructor(parent, pos, end) {
-        super(parent, 'boolean', 'false', pos, end);
+        super(parent, BooleanType, 'false', pos, end);
     }
 }
 
@@ -1233,9 +1444,9 @@ class ThisKeyword extends Literal {
 /// a = 1;
 class NumericLiteral extends Literal {
     constructor(parent, text, pos, end) {
-        let type = 'int';
+        let type = IntType;
         if (text.indexOf('.') >= 0) {
-            type = 'double';
+            type = DoubleType;
         }
         super(parent, type, text, pos, end);
     }
@@ -1244,21 +1455,21 @@ class NumericLiteral extends Literal {
 /// a = 1n;
 class BigIntLiteral extends Literal {
     constructor(parent, text, pos, end) {
-        super(parent, 'int', text, pos, end);
+        super(parent, IntType, text, pos, end);
     }
 }
 
 /// a = 'string';
 class StringLiteral extends Literal {
     constructor(parent, text, pos, end) {
-        super(parent, 'String', `"${text}"`, pos, end);
+        super(parent, StringType, `"${text.replace(/\n/, '\\n')}"`, pos, end);
     }
 }
 
 /// /^\d{11}$/
 class RegularExpressionLiteral extends Literal {
     constructor(parent, text, pos, end) {
-        super(parent, 'Pattern', `Pattern.compile("${text}")`, pos, end);
+        super(parent, PatternType, `Pattern.compile("${text}")`, pos, end);
     }
 }
 
@@ -1326,4 +1537,13 @@ module.exports = {
     ArrayLiteralExpression,
     isDeclaration,
     isFunction,
+    Type,
+    NormalType,
+    ArrayType,
+    VoidType,
+    BooleanType,
+    IntType,
+    DoubleType,
+    StringType,
+    PatternType,
 }

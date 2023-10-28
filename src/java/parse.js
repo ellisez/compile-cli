@@ -67,6 +67,15 @@ const {
     RegularExpressionLiteral,
     ArrayLiteralExpression,
     isFunction,
+    Type,
+    NormalType,
+    ArrayType,
+    VoidType,
+    BooleanType,
+    IntType,
+    DoubleType,
+    StringType,
+    PatternType,
 } = require("./ast.js");
 const { NewExpression } = require("./ast");
 
@@ -107,30 +116,36 @@ class JavaParser {
     tsProgram;
     #TSKindMap = {};
     project;
-    eventCenter = new EventCenter();
 
     compileUtils;
 
     typeResolver(tsType, module) {
-        if (tsType)
+        if (tsType) {
             switch (tsType) {
                 case 'number':
-                    return 'double';
+                    tsType = 'double';
+                    break;
                 case 'bigint':
-                    return 'int';
+                    tsType = 'int';
+                    break;
                 case 'string':
-                    return 'String';
+                    tsType = 'String';
+                    break;
                 case 'Set':
                     module.imports.add('java.util.HashSet');
-                    return 'HashSet';
+                    tsType = 'HashSet';
+                    break;
                 case 'Map':
                     module.imports.add('java.util.HashMap');
-                    return 'HashMap';
+                    tsType = 'HashMap';
+                    break;
                 case 'Array':
                     module.imports.add('java.util.ArrayList');
-                    return 'ArrayList';
+                    tsType = 'ArrayList';
+                    break;
             }
-        return tsType;
+            return new NormalType(tsType);
+        }
     }
 
     entityResolver = {
@@ -147,7 +162,7 @@ class JavaParser {
 
                 const functionDeclaration = new FunctionDeclaration(javaNode, '');
                 functionDeclaration.parameters = ['param1'];
-                functionDeclaration.typeParameters = ['string'];
+                functionDeclaration.typeParameters = [StringType];
 
                 printIdentifier.implicitType = this.compileUtils.importFunctionType(functionDeclaration);
 
@@ -281,7 +296,6 @@ class JavaParser {
             const javaStatement = this.visitNode(statement, javaModule, javaModule.closure);
             if (javaStatement) {
                 if (javaStatement instanceof Declaration || javaStatement instanceof VariableStatement) {
-                    javaModule.addMember(javaStatement);
                 } else {
                     javaModule.staticBlock.body.statements.push(javaStatement);
                 }
@@ -391,34 +405,30 @@ class JavaParser {
     TSType(tsNode, javaNode, closure) {
         if (!tsNode) return;
 
-        let type = '';
+        let typeString = '';
         const module = javaNode.module;
         switch (tsNode.kind) {
             case ts.SyntaxKind.Identifier:
-                type = tsNode.escapedText;
+                typeString = tsNode.escapedText;
                 break;
-            case ts.SyntaxKind.ArrayType:
+            case ts.SyntaxKind.ArrayType:// string[]
                 const elementType = this.TSType(tsNode.elementType, javaNode, closure);
-                return elementType + '[]';
+                return new ArrayType(elementType);
             case ts.SyntaxKind.TypeReference:// Array<string>
                 const typeName = this.TSType(tsNode.typeName, javaNode, closure);
                 const typeArguments = tsNode.typeArguments;
                 if (typeArguments) {
-                    let typeArgumentText = '';
                     for (let typeArgument of typeArguments) {
-                        if (typeArgumentText) {
-                            typeArgumentText += ', ';
-                        }
-                        typeArgumentText += this.TSType(typeArgument, javaNode, closure);
+                        const argumentType = this.TSType(typeArgument, javaNode, closure);
+                        typeName.typeArguments.push(argumentType);
                     }
-                    return `${typeName}<${typeArgumentText}>`;
                 }
                 return typeName;
             default:
-                type = this.compileUtils.parseType(tsNode);
+                typeString = this.compileUtils.parseType(tsNode);
         }
 
-        return this.typeResolver(type, module);
+        return this.typeResolver(typeString, module);
     }
 
 
@@ -435,6 +445,7 @@ class JavaParser {
         const text = tsNode.escapedText;
 
         const identifier = new Identifier(javaNode, tsNode.pos, tsNode.end);
+        identifier.text = text;
         identifier.implicitType = this.compileUtils.parseType(tsNode);
         const declaration = closure.get(text);
         if (!declaration) {
@@ -568,7 +579,7 @@ class JavaParser {
         const end = tsNode.end;
 
         let classDeclaration;
-        const { isExport, isDefault, accessor, isStatic, isFinal } = this.compileUtils.parseModifiers(tsNode);
+        let { isExport, isDefault, accessor, isStatic, isFinal } = this.compileUtils.parseModifiers(tsNode);
         const build = () => {
             classDeclaration.accessor = accessor === undefined ? 'public' : accessor;
             classDeclaration.isStatic = isStatic === undefined ? false : isStatic;
@@ -589,6 +600,7 @@ class JavaParser {
                 classDeclaration.pos = pos;
                 classDeclaration.end = end;
             } else {
+                isStatic = true;
                 classDeclaration = new ClassDeclaration(javaNode, name, pos, end);
                 module.addMember(classDeclaration);
             }
@@ -850,7 +862,7 @@ class JavaParser {
         const prefixUnaryExpression = new PrefixUnaryExpression(javaNode, tsNode.pos, tsNode.end);
         prefixUnaryExpression.operand = this.visitNode(operand, prefixUnaryExpression, closure);
         const compileUtils = this.project.compileUtils;
-        prefixUnaryExpression.operator = compileUtils.parseUnaryOperator(operator);
+        prefixUnaryExpression.operator = compileUtils.parseToken(operator);
         return prefixUnaryExpression;
     }
 
@@ -862,7 +874,7 @@ class JavaParser {
         const postfixUnaryExpression = new PostfixUnaryExpression(javaNode, tsNode.pos, tsNode.end);
         postfixUnaryExpression.operand = this.visitNode(operand, postfixUnaryExpression, closure);
         const compileUtils = this.project.compileUtils;
-        postfixUnaryExpression.operator = compileUtils.parseUnaryOperator(operator);
+        postfixUnaryExpression.operator = compileUtils.parseToken(operator);
         return postfixUnaryExpression;
     }
 
@@ -1224,36 +1236,130 @@ class CompileUtils {
         if (!tsNode) return;
 
         const typeChecker = this.tsProgram.getTypeChecker();
-        const type = typeChecker.getTypeAtLocation(tsNode);
-        const typeToString = typeChecker.typeToString(type);
-
-        return typeToString;
+        const tsType = typeChecker.getTypeAtLocation(tsNode);
+        return typeChecker.typeToString(tsType);
     }
 
     parseOperator(tsNode) {
         if (!tsNode) return;
-        return this.parseUnaryOperator(tsNode.kind);
+        return this.parseToken(tsNode.kind);
     }
 
-    parseUnaryOperator(operator) {
+    parseToken(operator) {
         switch (operator) {
-            case ts.SyntaxKind.PlusPlusToken:
-                return '++'
-            case ts.SyntaxKind.MinusMinusToken:
-                return '--'
+            case ts.SyntaxKind.OpenBraceToken:
+                return '{';
+            case ts.SyntaxKind.CloseBraceToken:
+                return '}';
+            case ts.SyntaxKind.OpenParenToken:
+                return '(';
+            case ts.SyntaxKind.CloseParenToken:
+                return ')';
+            case ts.SyntaxKind.OpenBracketToken:
+                return '[';
+            case ts.SyntaxKind.CloseBracketToken:
+                return ']';
+            case ts.SyntaxKind.DotToken:
+                return '.';
+            case ts.SyntaxKind.DotDotDotToken:
+                return '...';
+            case ts.SyntaxKind.SemicolonToken:
+                return ';';
+            case ts.SyntaxKind.CommaToken:
+                return ',';
+            case ts.SyntaxKind.LessThanToken:
+                return '<';
+            case ts.SyntaxKind.LessThanSlashToken:
+                return '</';
+            case ts.SyntaxKind.GreaterThanToken:
+                return '>';
+            case ts.SyntaxKind.LessThanEqualsToken:
+                return '<=';
+            case ts.SyntaxKind.GreaterThanEqualsToken:
+                return '>=';
+            case ts.SyntaxKind.EqualsEqualsToken:
+                return '==';
+            case ts.SyntaxKind.ExclamationEqualsToken:
+                return '!=';
+            case ts.SyntaxKind.EqualsEqualsEqualsToken:
+                return '===';
+            case ts.SyntaxKind.ExclamationEqualsEqualsToken:
+                return '!==';
+            case ts.SyntaxKind.EqualsGreaterThanToken:
+                return '=>';
             case ts.SyntaxKind.PlusToken:
-                return '+'
+                return '+';
             case ts.SyntaxKind.MinusToken:
-                return '-'
-            case ts.SyntaxKind.TildeToken:
-                return '~'
+                return '-';
+            case ts.SyntaxKind.AsteriskToken:
+                return '*';
+            case ts.SyntaxKind.AsteriskAsteriskToken:
+                return '**';
+            case ts.SyntaxKind.SlashToken:
+                return '/';
+            case ts.SyntaxKind.PercentToken:
+                return '%';
+            case ts.SyntaxKind.PlusPlusToken:
+                return '++';
+            case ts.SyntaxKind.MinusMinusToken:
+                return '--';
+            case ts.SyntaxKind.LessThanLessThanToken:
+                return '<<';
+            case ts.SyntaxKind.GreaterThanGreaterThanToken:
+                return '>>';
+            case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken:
+                return '<<<';
+            case ts.SyntaxKind.AmpersandToken:
+                return '&';
+            case ts.SyntaxKind.BarToken:
+                return '|';
+            case ts.SyntaxKind.CaretToken:
+                return '^';
             case ts.SyntaxKind.ExclamationToken:
-                return '!'
+                return '!';
+            case ts.SyntaxKind.TildeToken:
+                return '~';
+            case ts.SyntaxKind.AmpersandAmpersandToken:
+                return '&&';
+            case ts.SyntaxKind.BarBarToken:
+                return '||';
+            case ts.SyntaxKind.QuestionToken:
+                return '?';
+            case ts.SyntaxKind.ColonToken:
+                return ':';
+            case ts.SyntaxKind.AtToken:
+                return '@';
+            case ts.SyntaxKind.EqualsToken:
+                return '=';
+            case ts.SyntaxKind.PlusEqualsToken:
+                return '+=';
+            case ts.SyntaxKind.MinusEqualsToken:
+                return '-=';
+            case ts.SyntaxKind.AsteriskEqualsToken:
+                return '*=';
+            case ts.SyntaxKind.AsteriskAsteriskEqualsToken:
+                return '**=';
+            case ts.SyntaxKind.SlashEqualsToken:
+                return '/=';
+            case ts.SyntaxKind.PercentEqualsToken:
+                return '%=';
+            case ts.SyntaxKind.LessThanLessThanEqualsToken:
+                return '<<=';
+            case ts.SyntaxKind.GreaterThanGreaterThanEqualsToken:
+                return '>>=';
+            case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken:
+                return '>>>=';
+            case ts.SyntaxKind.AmpersandEqualsToken:
+                return '&=';
+            case ts.SyntaxKind.BarEqualsToken:
+                return '|=';
+            case ts.SyntaxKind.CaretEqualsToken:
+                return '^=';
         }
     }
 
     getFunctionType(javaNode) {
-        if (!javaNode) return 'void';
+        if (!javaNode) return VoidType;
 
         if (isFunction(javaNode)) {
             let functionClassName = 'Function';
@@ -1261,9 +1367,11 @@ class CompileUtils {
             const parameters = javaNode.parameters;
             for (let typeParameter of typeParameters) {
                 if (!typeParameter) continue;
-                functionClassName += toCamel(typeParameter);
+                const typeString = typeParameter.getText();
+                functionClassName += toCamel(typeString);
             }
-            functionClassName += 'Return' + toCamel(javaNode.returnType);
+            const returnTypeString = javaNode.returnType.getText();
+            functionClassName += 'Return' + toCamel(returnTypeString);
 
             let functionMember = this.#functionMemberMap[functionClassName];
             if (!functionMember) {
@@ -1278,7 +1386,7 @@ class CompileUtils {
             }
             return functionClassName;
         }
-        return 'void';
+        return VoidType;
     }
 
     importFunctionType(javaNode, module) {
