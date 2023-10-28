@@ -34,7 +34,11 @@ class Printer {
 
     writeln(node) {
         const newLine = this.compileUtils.newLine;
-        this.write(node, newLine);
+        if (node) {
+            this.write(node, newLine);
+        } else {
+            this.#text += newLine;
+        }
     }
 
     writeModifiers(member) {
@@ -146,7 +150,6 @@ class ASTNode {
     }
 
     getText() {
-        return '';
     }
 
     forEachChild(cb) {
@@ -259,7 +262,9 @@ class ClassDeclaration extends Declaration {
 
         compileUtils.increaseIndent();
         const staticBlockCode = this.staticBlock.getText();
-        printer.writeln(staticBlockCode);
+        if (staticBlockCode) {
+            printer.writeln(staticBlockCode);
+        }
 
         for (let member of this.members) {
             printer.writeln(member);
@@ -346,6 +351,10 @@ class Identifier extends ASTNode {
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
+    }
+
+    getText() {
+        return this.text;
     }
 }
 
@@ -458,7 +467,7 @@ class MethodDeclaration extends MemberDeclaration {
     addParameter(parameter) {
         this.parameters.push(parameter);
         this.typeParameters.push(parameter.type);
-        this.closure.var(parameter.name.escapedText, parameter);
+        this.closure.var(parameter.name, parameter);
     }
 
     get returnType() {
@@ -626,6 +635,18 @@ class Block extends ASTNode {
         const compileUtils = this.module.project.compileUtils;
         this.statements.push(declaration);
         compileUtils.getClosureFromNode(this).var(name, declaration);
+    }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+        for (let statement of this.statements) {
+            const statementCode = statement.getText();
+            if (statementCode) {
+                printer.writeln(statementCode);
+            }
+        }
+        return printer.getText();
     }
 }
 
@@ -819,6 +840,20 @@ class ReturnStatement extends Statement {
     forEachChild(cb) {
         cb(this.expression);
     }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+
+        printer.write('return');
+
+        const expressionCode = this.expression.getText();
+        if (expressionCode) {
+            printer.write(expressionCode);
+            printer.code(';');
+        }
+        return printer.getText();
+    }
 }
 
 class SwitchStatement extends Statement {
@@ -958,6 +993,19 @@ class BinaryExpression extends Expression {
         cb(this.left);
         cb(this.right);
     }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+
+        printer.write(this.left.getText());
+
+        printer.write(this.operator);
+
+        printer.write(this.right.getText());
+
+        return printer.getText();
+    }
 }
 
 class ParenthesizedExpression extends Expression {
@@ -1074,6 +1122,17 @@ class PropertyAccessExpression extends Expression {
     forEachChild(cb) {
         cb(this.expression);
     }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+
+        printer.code(this.expression.getText());
+        printer.code('.');
+        printer.code(this.name);
+
+        return printer.getText();
+    }
 }
 
 /**
@@ -1137,6 +1196,7 @@ class Literal extends ASTNode {
     constructor(parent, type, text, pos, end) {
         super(parent, pos, end);
         this.type = type;
+        this.text = text;
     }
 
 

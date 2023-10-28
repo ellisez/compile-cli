@@ -29,6 +29,17 @@ function toClassFullName(fileName) {
     return `${packageName}.${className}`;
 }
 
+function toClassInfo(fileName) {
+    const packageName = toPackageName(fileName);
+    const className = toClassName(fileName);
+    const fullName = `${packageName}.${className}`;
+    return {
+        packageName,
+        className,
+        fullName,
+    }
+}
+
 function toFileName(classFullName) {
     if (classFullName.startsWith(config.java.package)) {
         let relativePath = classFullName.substr(config.java.package);
@@ -64,6 +75,7 @@ module.exports = {
     toPackageName,
     toClassName,
     toClassFullName,
+    toClassInfo,
     toFileName,
     toCamel,
     toUnderline,

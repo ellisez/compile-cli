@@ -6,7 +6,7 @@ const { entryFile } = require("../pkg.js");
 const log = require('../log.js');
 const fs = require('node:fs');
 const {
-    toCamel, toFileName, toPackageName, toClassName, toClassFullName, toJavaFile,
+    toCamel, toFileName, toPackageName, toClassName, toClassInfo, toJavaFile,
 } = require("./utils");
 const {
     Closure,
@@ -138,7 +138,8 @@ class JavaParser {
             const name = tsNode.name;
             const expression = tsNode.expression;
 
-            if (expression && name && expression.escapedText === 'console' && name.escapedText === 'log') {
+            if (expression && name && expression.escapedText === 'console' && (
+                name.escapedText === 'log' || name.escapedText === 'error')) {
                 const systemAccess = new PropertyAccessExpression(javaNode, tsNode.pos, tsNode.end);
 
                 const printIdentifier = new Identifier(systemAccess, name.pos, name.end);
@@ -175,25 +176,27 @@ class JavaParser {
             const text = tsNode.escapedText;
             const module = javaNode.module;
 
-            const identifier = new Identifier(javaNode, tsNode.pos, tsNode.end);
+            let identifier;
             switch (text) {
                 case 'Set':
+                    identifier = new Identifier(javaNode, tsNode.pos, tsNode.end);
                     identifier.implicitType = 'Set';
                     identifier.text = 'Set';
                     module.imports.add('java.util.Set');
-                    break;
+                    return identifier;
                 case 'Map':
+                    identifier = new Identifier(javaNode, tsNode.pos, tsNode.end);
                     identifier.implicitType = 'HashMap';
                     identifier.text = 'HashMap';
                     module.imports.add('java.util.HashMap');
-                    break;
+                    return identifier;
                 case 'Array':
+                    identifier = new Identifier(javaNode, tsNode.pos, tsNode.end);
                     identifier.implicitType = 'ArrayList';
                     identifier.text = 'ArrayList';
                     module.imports.add('java.util.ArrayList');
-                    break;
+                    return identifier;
             }
-            return identifier;
         },
         TSArrayLiteralExpression(tsNode, javaNode, closure) {
             const elements = tsNode.elements;
@@ -419,9 +422,9 @@ class JavaParser {
     }
 
 
-	///a();
-	///b = a;
-	///a = 1;
+    ///a();
+    ///b = a;
+    ///a = 1;
     TSIdentifier(tsNode, javaNode, closure) {
         const tryEntity = this.entityResolver['TSIdentifier'];
         if (tryEntity) {
@@ -447,7 +450,7 @@ class JavaParser {
         return identifier;
     }
 
-	///a.b
+    ///a.b
     TSPropertyAccessExpression(tsNode, javaNode, closure) {
         const tryEntity = this.entityResolver['TSPropertyAccessExpression'];
         if (tryEntity) {
@@ -464,7 +467,7 @@ class JavaParser {
         return propertyAccessExpression;
     }
 
-	///let arr = [1,2,3];
+    ///let arr = [1,2,3];
     TSArrayLiteralExpression(tsNode, javaNode, closure) {
         const tryEntity = this.entityResolver['TSArrayLiteralExpression'];
         if (tryEntity) {
@@ -481,12 +484,12 @@ class JavaParser {
 
     }
 
-	///this.a
+    ///this.a
     TSThisKeyword(tsNode, javaNode, closure) {
         return new ThisKeyword(javaNode, tsNode.pos, tsNode.end);
     }
 
-	///import a from 'b'
+    ///import a from 'b'
     TSImportDeclaration(tsNode, javaNode, closure) {
         const importClause = tsNode.importClause;
         const moduleSpecifier = tsNode.moduleSpecifier.text;
@@ -496,9 +499,12 @@ class JavaParser {
         const fileDir = path.dirname(currentModule.fileName);
 
         let modulePath = path.resolve(fileDir, moduleSpecifier);
-        const modulePackage = toClassFullName(modulePath);
+        const { packageName, fullName } = toClassInfo(modulePath);
+        const modulePackage = fullName;
 
-        currentModule.imports.add(modulePackage);
+        if (packageName !== currentModule.packageName) {
+            currentModule.imports.add(modulePackage);
+        }
 
         const module = this.project.moduleMap.get(modulePackage);
         if (!module) return;
@@ -537,7 +543,7 @@ class JavaParser {
         }
     }
 
-	///export default a = 1;
+    ///export default a = 1;
     TSExportAssignment(tsNode, javaNode, closure) {
         const expression = tsNode.expression;
 
@@ -704,7 +710,7 @@ class JavaParser {
         }
     }
 
-	///new A();
+    ///new A();
     TSNewExpression(tsNode, javaNode, closure) {
         const expression = tsNode.expression;
         const argumentNodes = tsNode.arguments;
@@ -718,7 +724,7 @@ class JavaParser {
         return newExpression;
     }
 
-	///a(1, 2);
+    ///a(1, 2);
     TSCallExpression(tsNode, javaNode, closure) {
         const expression = tsNode.expression;
         const argumentNodes = tsNode.arguments;
@@ -732,7 +738,7 @@ class JavaParser {
         return callExpression;
     }
 
-	///try {} catch(e) {} finally {}
+    ///try {} catch(e) {} finally {}
     TSTryStatement(tsNode, javaNode, closure) {
         const tryBlock = tsNode.tryBlock;
         const catchClause = tsNode.catchClause;
@@ -740,26 +746,29 @@ class JavaParser {
 
         const tryStatement = new TryStatement(javaNode, tsNode.pos, tsNode.end);
         tryStatement.tryBlock = this.TSBlock(tryBlock, tryStatement, tryStatement.tryClosure);
-        tryStatement.catchClause = this.visitNode(catchClause, tryStatement, tryStatement.catchClause);
+        tryStatement.catchClause = this.visitNode(catchClause, tryStatement, tryStatement.catchClosure);
         tryStatement.finallyBlock = this.TSBlock(finallyBlock, tryStatement, tryStatement.finallyClosure);
 
         return tryStatement;
     }
 
-	///catch(e) {}
+    ///catch(e) {}
     TSCatchClause(tsNode, javaNode, closure) {
         const variableDeclaration = tsNode.variableDeclaration;
-        const name = variableDeclaration.name.escapedText;
+        const variableName = variableDeclaration.name;
+        const name = variableName.escapedText;
         const block = tsNode.block;
 
         const catchClause = new CatchClause(javaNode, tsNode.pos, tsNode.end);
         catchClause.variableDeclaration = name;
+        const declaration = new VariableDeclaration(catchClause, name, variableName.pos, variableName.end);
+        closure.var(name, declaration);
         catchClause.block = this.visitNode(block, catchClause, closure);
 
         return catchClause;
     }
 
-	///function a() {}
+    ///function a() {}
     TSFunctionDeclaration(tsNode, javaNode, closure) {
         const name = tsNode.name ? tsNode.name.escapedText : '';
         const type = tsNode.type;
@@ -815,7 +824,7 @@ class JavaParser {
         } else {
             if (javaNode instanceof JavaModule) {
                 const propertyDeclaration = this.createPropertyDeclaration({
-                    accessor, isStatic, isFinal, type, name: 'exportDefault',
+                    accessor, isStatic, isFinal, type, name,
                     javaNode, pos, end,
                 });
 
@@ -833,7 +842,7 @@ class JavaParser {
         }
     }
 
-	///++i
+    ///++i
     TSPrefixUnaryExpression(tsNode, javaNode, closure) {
         const operand = tsNode.operand;
         const operator = tsNode.operator;
@@ -845,7 +854,7 @@ class JavaParser {
         return prefixUnaryExpression;
     }
 
-	///i++
+    ///i++
     TSPostfixUnaryExpression(tsNode, javaNode, closure) {
         const operand = tsNode.operand;
         const operator = tsNode.operator;
@@ -857,7 +866,7 @@ class JavaParser {
         return postfixUnaryExpression;
     }
 
-	///for(let i=0; i< 3; i++) {}
+    ///for(let i=0; i< 3; i++) {}
     TSForStatement(tsNode, javaNode, closure) {
         const initializer = tsNode.initializer;
         const condition = tsNode.condition;
@@ -884,7 +893,7 @@ class JavaParser {
         return forStatement;
     }
 
-	///for(let key in object) {}
+    ///for(let key in object) {}
     TSForInStatement(tsNode, javaNode, closure) {
         const initializer = tsNode.initializer;
         const expression = tsNode.expression;
@@ -909,7 +918,7 @@ class JavaParser {
         return forInStatement;
     }
 
-	///for(let item of array) {}
+    ///for(let item of array) {}
     TSForOfStatement(tsNode, javaNode, closure) {
         const initializer = tsNode.initializer;
         const expression = tsNode.expression;
@@ -934,7 +943,7 @@ class JavaParser {
         return forOfStatement;
     }
 
-	///if (a == 1) {} else if (a == 2) {} else {}
+    ///if (a == 1) {} else if (a == 2) {} else {}
     TSIfStatement(tsNode, javaNode, closure) {
         const expression = tsNode.expression;
         const thenStatement = tsNode.thenStatement;
@@ -953,7 +962,7 @@ class JavaParser {
         return ifStatement;
     }
 
-	///switch(a) {}
+    ///switch(a) {}
     TSSwitchStatement(tsNode, javaNode, closure) {
         const expression = tsNode.expression;
         const caseBlock = tsNode.caseBlock;
@@ -972,7 +981,7 @@ class JavaParser {
         return switchStatement;
     }
 
-	///switch(a) { case 1: }
+    ///switch(a) { case 1: }
     TSCaseClause(tsNode, javaNode, closure) {
         const expression = tsNode.expression;
 
@@ -983,7 +992,7 @@ class JavaParser {
         return caseClause;
     }
 
-	///throw error;
+    ///throw error;
     TSThrowStatement(tsNode, javaNode, closure) {
         const expression = tsNode.expression;
 
@@ -994,7 +1003,7 @@ class JavaParser {
 
     }
 
-	///switch(a) { default: }
+    ///switch(a) { default: }
     TSDefaultClause(tsNode, javaNode, closure) {
 
         const defaultClause = new DefaultClause(javaNode, tsNode.pos, tsNode.end);
@@ -1003,7 +1012,7 @@ class JavaParser {
         return defaultClause;
     }
 
-	///return a;
+    ///return a;
     TSReturnStatement(tsNode, javaNode, closure) {
         const expression = tsNode.expression;
         const pos = tsNode.pos;
@@ -1020,27 +1029,27 @@ class JavaParser {
         return returnStatement;
     }
 
-	///break;
+    ///break;
     TSBreakStatement(tsNode, javaNode, closure) {
         return new BreakStatement(javaNode, tsNode.pos, tsNode.end);
     }
 
-	///continue;
+    ///continue;
     TSContinueStatement(tsNode, javaNode, closure) {
         return new ContinueStatement(javaNode, tsNode.pos, tsNode.end);
     }
 
-	///a=1+2;
-	///a();
-	///new A();
-	///++i;
-	///i--;
-	///a.b;
+    ///a=1+2;
+    ///a();
+    ///new A();
+    ///++i;
+    ///i--;
+    ///a.b;
     TSExpressionStatement(tsNode, javaNode, closure) {
         return this.visitNode(tsNode.expression, javaNode, closure);
     }
 
-	///class A { constructor() {} }
+    ///class A { constructor() {} }
     TSConstructor(tsNode, javaNode, closure) {
         const parameters = tsNode.parameters;
         const body = tsNode.body;
@@ -1066,7 +1075,7 @@ class JavaParser {
         constructorDeclaration.implicitReturnType = body.implicitReturnType;
     }
 
-	///class A { private int b = 1; }
+    ///class A { private int b = 1; }
     TSPropertyDeclaration(tsNode, javaNode, closure) {
         const name = tsNode.name.escapedText;
         const type = tsNode.type;
@@ -1082,7 +1091,7 @@ class JavaParser {
         })
     }
 
-	///class A { public int b(double c) {} }
+    ///class A { public int b(double c) {} }
     TSMethodDeclaration(tsNode, javaNode, closure) {
         const name = tsNode.name.escapedText;
         const type = tsNode.type;
@@ -1099,8 +1108,8 @@ class JavaParser {
         });
     }
 
-	///function fun() {}
-	///class A { fun() {} }
+    ///function fun() {}
+    ///class A { fun() {} }
     TSBlock(tsNode, javaNode, closure) {
         if (!tsNode) return;
         const pos = tsNode.pos;
@@ -1112,17 +1121,18 @@ class JavaParser {
         return block;
     }
 
-	///function a(p=2) {}
-	///class A { fun(p=2) {} }
+    ///function a(p=2) {}
+    ///class A { fun(p=2) {} }
     TSParameter(tsNode, javaNode, closure) {
         const name = tsNode.name;
+        const paramName = name.escapedText;
         const type = tsNode.type;
         const initializer = tsNode.initializer;
 
         const pos = tsNode.pos;
         const end = tsNode.end;
 
-        const parameterDeclaration = new ParameterDeclaration(javaNode, name, pos, end);
+        const parameterDeclaration = new ParameterDeclaration(javaNode, paramName, pos, end);
 
         parameterDeclaration.explicitType = this.TSType(type, parameterDeclaration, closure);
 
@@ -1131,32 +1141,32 @@ class JavaParser {
         return parameterDeclaration;
     }
 
-	///true
+    ///true
     TSTrueKeyword(tsNode, javaNode, closure) {
         return new TrueKeyword(javaNode, tsNode.pos, tsNode.end);
     }
 
-	///false
+    ///false
     TSFalseKeyword(tsNode, javaNode, closure) {
         return new FalseKeyword(javaNode, tsNode.pos, tsNode.end);
     }
 
-	///a = 1;
+    ///a = 1;
     TSNumericLiteral(tsNode, javaNode, closure) {
         return new NumericLiteral(javaNode, tsNode.text, tsNode.pos, tsNode.end);
     }
 
-	///a = 1n;
+    ///a = 1n;
     TSBigIntLiteral(tsNode, javaNode, closure) {
         return new NumericLiteral(javaNode, tsNode.text, tsNode.pos, tsNode.end);
     }
 
-	///a = 'string';
+    ///a = 'string';
     TSStringLiteral(tsNode, javaNode, closure) {
         return new StringLiteral(javaNode, tsNode.text, tsNode.pos, tsNode.end);
     }
 
-	////^\d{11}$/
+    ////^\d{11}$/
     TSRegularExpressionLiteral(tsNode, javaNode, closure) {
         return new RegularExpressionLiteral(javaNode, tsNode.text, tsNode.pos, tsNode.end);
     }
