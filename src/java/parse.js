@@ -17,6 +17,7 @@ const {
     ImportDeclaration,
     Declaration,
     ClassDeclaration,
+    InterfaceDeclaration,
     PropertyDeclaration,
     ConstructorDeclaration,
     MethodDeclaration,
@@ -70,14 +71,10 @@ const {
     Type,
     NormalType,
     ArrayType,
-    VoidType,
-    BooleanType,
-    IntType,
-    DoubleType,
-    StringType,
-    PatternType,
+    getType,
+    entityType,
 } = require("./ast.js");
-const { NewExpression } = require("./ast");
+const { NewExpression, BigIntLiteral } = require("./ast");
 
 const config = readConfig();
 
@@ -119,7 +116,7 @@ class JavaParser {
 
     compileUtils;
 
-    typeResolver(tsType, module) {
+    typeResolver(tsType, module, closure) {
         if (tsType) {
             switch (tsType) {
                 case 'number':
@@ -143,6 +140,18 @@ class JavaParser {
                     module.imports.add('java.util.ArrayList');
                     tsType = 'ArrayList';
                     break;
+                default:
+                    const declaration = closure.get(tsType);
+                    if (declaration) {
+                        const declarationModule = declaration.module;
+                        const modulePackage = declarationModule.fullName;
+                        const moduleName = declarationModule.name;
+                        const fullName = declaration.fullName;
+                        const queryPackage = fullName.substring(modulePackage.length);
+                        if (queryPackage) {
+                            tsType = moduleName + queryPackage;
+                        }
+                    }
             }
             return new NormalType(tsType);
         }
@@ -161,10 +170,13 @@ class JavaParser {
                 printIdentifier.text = 'println';
 
                 const functionDeclaration = new FunctionDeclaration(javaNode, '');
-                functionDeclaration.parameters = ['param1'];
-                functionDeclaration.typeParameters = [StringType];
+                const paramType1 = getType('String');
+                const param1 = new ParameterDeclaration(functionDeclaration, 'param1');
+                param1.explicitType = paramType1;
+                functionDeclaration.parameters = [param1];
+                functionDeclaration.typeParameters = [paramType1];
 
-                printIdentifier.implicitType = this.compileUtils.importFunctionType(functionDeclaration);
+                printIdentifier.implicitType = this.compileUtils.getFunctionType(functionDeclaration);
 
                 systemAccess.name = printIdentifier;
 
@@ -338,7 +350,11 @@ class JavaParser {
         if (javaInitializer) {
             propertyDeclaration.initializer = javaInitializer;
             if (javaInitializer.type) {
-                propertyDeclaration.implicitType = javaInitializer.type;
+                const initializerType = javaInitializer.type;
+                propertyDeclaration.implicitType = initializerType;
+                if (initializerType.isFunction) {
+                    this.compileUtils.importFunctionType(initializerType, javaNode.module);
+                }
             }
         }
         return propertyDeclaration;
@@ -428,7 +444,7 @@ class JavaParser {
                 typeString = this.compileUtils.parseType(tsNode);
         }
 
-        return this.typeResolver(typeString, module);
+        return this.typeResolver(typeString, module, closure);
     }
 
 
@@ -446,7 +462,6 @@ class JavaParser {
 
         const identifier = new Identifier(javaNode, tsNode.pos, tsNode.end);
         identifier.text = text;
-        identifier.implicitType = this.compileUtils.parseType(tsNode);
         const declaration = closure.get(text);
         if (!declaration) {
             let parentName = 'root'
@@ -456,6 +471,7 @@ class JavaParser {
             }
             throw new ReferenceError(`${text} is not defined. parent ${parentName}, file ${javaNode.module.fileName}.`);
         }
+        identifier.implicitType = declaration.type;
         identifier.declaration = declaration;
         declaration.refs.push(identifier);
         return identifier;
@@ -596,11 +612,11 @@ class JavaParser {
         if (isExport) {
             const module = javaNode.module;
             if (isDefault) {
+                isStatic = false;
                 classDeclaration = module;
                 classDeclaration.pos = pos;
                 classDeclaration.end = end;
             } else {
-                isStatic = true;
                 classDeclaration = new ClassDeclaration(javaNode, name, pos, end);
                 module.addMember(classDeclaration);
             }
@@ -728,7 +744,9 @@ class JavaParser {
         const argumentNodes = tsNode.arguments;
 
         const newExpression = new NewExpression(javaNode, tsNode.pos, tsNode.end);
-        newExpression.expression = this.visitNode(expression, newExpression, closure);
+        const expressionNode = this.visitNode(expression, newExpression, closure);
+        newExpression.expression = expressionNode;
+        newExpression.implicitType = expressionNode.type;
         for (let argumentNode of argumentNodes) {
             newExpression.arguments.push(this.visitNode(argumentNode, newExpression, closure));
         }
@@ -803,7 +821,7 @@ class JavaParser {
 
                     const propertyDeclaration = this.createPropertyDeclaration({
                         accessor, isStatic, isFinal, type: methodDeclaration.type, name: 'exportDefault',
-                        javaNode: module, pos, end,
+                        javaNode: module, pos, end, closure
                     });
                     const identifier = new Identifier(propertyDeclaration);
                     identifier.implicitType = methodDeclaration.type;
@@ -837,7 +855,7 @@ class JavaParser {
             if (javaNode instanceof JavaModule) {
                 const propertyDeclaration = this.createPropertyDeclaration({
                     accessor, isStatic, isFinal, type, name,
-                    javaNode, pos, end,
+                    javaNode, pos, end, closure
                 });
 
                 const initializer = this.createLambdaFunction({
@@ -1170,7 +1188,7 @@ class JavaParser {
 
     ///a = 1n;
     TSBigIntLiteral(tsNode, javaNode, closure) {
-        return new NumericLiteral(javaNode, tsNode.text, tsNode.pos, tsNode.end);
+        return new BigIntLiteral(javaNode, tsNode.text, tsNode.pos, tsNode.end);
     }
 
     ///a = 'string';
@@ -1207,6 +1225,7 @@ class CompileUtils {
                 case ts.SyntaxKind.ExportKeyword:
                     result.accessor = 'public';
                     result.isExport = true;
+                    result.isStatic = true;
                     break;
                 case ts.SyntaxKind.DefaultKeyword:
                     result.isDefault = true;
@@ -1282,7 +1301,8 @@ class CompileUtils {
             case ts.SyntaxKind.ExclamationEqualsToken:
                 return '!=';
             case ts.SyntaxKind.EqualsEqualsEqualsToken:
-                return '===';
+                // return '===';
+                return '==';
             case ts.SyntaxKind.ExclamationEqualsEqualsToken:
                 return '!==';
             case ts.SyntaxKind.EqualsGreaterThanToken:
@@ -1359,7 +1379,7 @@ class CompileUtils {
     }
 
     getFunctionType(javaNode) {
-        if (!javaNode) return VoidType;
+        if (!javaNode) return getType('void');
 
         if (isFunction(javaNode)) {
             let functionClassName = 'Function';
@@ -1370,42 +1390,42 @@ class CompileUtils {
                 const typeString = typeParameter.getText();
                 functionClassName += toCamel(typeString);
             }
-            const returnTypeString = javaNode.returnType.getText();
-            functionClassName += 'Return' + toCamel(returnTypeString);
+            const returnType = javaNode.returnType;
+            functionClassName += 'Return' + toCamel(returnType.getText());
 
             let functionMember = this.#functionMemberMap[functionClassName];
             if (!functionMember) {
                 const module = javaNode.module;
-                functionMember = new ClassDeclaration(module, functionClassName);
+                functionMember = new InterfaceDeclaration(module, functionClassName);
                 const methodMember = new MethodDeclaration(functionMember, 'call');
-                methodMember.typeParameters = [...typeParameters];
-                methodMember.parameters = [...parameters];
-                methodMember.explicitReturnType = functionClassName;
+                methodMember.explicitReturnType = returnType;
+                methodMember.explicitType = functionMember.type;
+                functionMember.type.isFunction = true;
+                for (let parameter of parameters) {
+                    methodMember.addParameter(parameter);
+                }
                 functionMember.addMember(methodMember);
                 this.#functionMemberMap[functionClassName] = functionMember;
             }
-            return functionClassName;
+            return functionMember.type;
         }
-        return VoidType;
+        return getType('void');
     }
 
-    importFunctionType(javaNode, module) {
-        let functionClassName = javaNode;
-        if (javaNode instanceof ASTNode) {
-            functionClassName = this.getFunctionType(javaNode);
-            module = javaNode.module;
-        }
+    importFunctionType(functionType, module) {
+        const functionClassName = functionType.getText();
+
         const project = module.project;
         const fullName = `${config.java.package}.FunctionInterface`;
         const functionModule = project.moduleMap.get(fullName);
-        const functionMember = functionModule.members.find(classNode => classNode.name === functionClassName);
+        let functionMember = functionModule.members.find(classNode => classNode.name === functionClassName);
         if (!functionMember) {
-            const functionMember = this.#functionMemberMap[functionClassName];
-            functionMember.addMember(functionMember);
+            functionMember = this.#functionMemberMap[functionClassName];
+            functionModule.addMember(functionMember);
         }
         const importFunction = `${fullName}.${functionClassName}`;
         module.imports.add(importFunction);
-        return functionClassName;
+        return functionType;
     }
 
     getClassFromNode(javaNode) {

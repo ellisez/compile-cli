@@ -1,9 +1,10 @@
 import Order, {OrderItem} from "../entity/order";
+import Consumer from "../entity/consumer";
 
 export default class OrderService {
-    private static id = 0;
+    private static id = 0n;
 
-    createOrder(consumer, ...itemList: OrderItem[]): Order {
+    createOrder(consumer: Consumer, ...itemList: OrderItem[]): Order {
         const order = new Order();
         order.id = ++OrderService.id;
         order.consumer = consumer;
@@ -16,7 +17,7 @@ export default class OrderService {
         return order;
     }
 
-    doPay(order) {
+    doPay(order: Order) {
         if (order.isPaid == false) {
             for (const item of order.itemList) {
                 if (item.product.count < item.count) {

@@ -151,6 +151,13 @@ class ASTNode {
     end;
     #fullName;
 
+    explicitType;
+    implicitType;
+
+    get type() {
+        return this.explicitType || this.implicitType;
+    }
+
     get fullName() {
         return this.#fullName;
     }
@@ -197,10 +204,13 @@ class Project {
 //=============//
 class Type {
 
+    isFunction = false;
+
     getText() {
 
     }
 }
+
 class NormalType extends Type {
     typeName;
 
@@ -208,7 +218,7 @@ class NormalType extends Type {
 
     elementType;
 
-    constructor(typeName, typeArguments= []) {
+    constructor(typeName, typeArguments = []) {
         super();
         this.typeName = typeName;
         this.typeArguments = typeArguments;
@@ -229,10 +239,11 @@ class NormalType extends Type {
         return code;
     }
 }
+
 class ArrayType extends Type {
     elementType;
 
-    constructor(elementType) {
+    constructor(elementType, isFunction = false) {
         super();
         this.elementType = elementType;
     }
@@ -242,19 +253,33 @@ class ArrayType extends Type {
     }
 }
 
-const VoidType = new NormalType('void');
-const BooleanType = new NormalType('boolean');
-const IntType = new NormalType('int');
-const DoubleType = new NormalType('double');
-const StringType = new NormalType('String');
-const PatternType = new NormalType('Pattern');
+function getType(name, newFun) {
+    let newVar = typeFinder.get(name);
+    if (!newVar && newFun) {
+        newVar = newFun();
+        typeFinder.set(name, newVar);
+    }
+    return newVar;
+}
+
+function entityType(typeName) {
+    getType(typeName, () => new NormalType(typeName));
+    return typeFinder;
+}
+
+const typeFinder = new Map();
+entityType('void');
+entityType('boolean');
+entityType('int');
+entityType('double');
+entityType('String');
+entityType('Pattern');
+
 //==============//
 // Declaration //
 //=============//
 class Declaration extends ASTNode {
     isFinal;
-    explicitType;
-    implicitType;
 
     #name;
 
@@ -278,10 +303,6 @@ class Declaration extends ASTNode {
         this.name = name;
     }
 
-    get type() {
-        return this.explicitType || this.implicitType;
-    }
-
 }
 
 function isDeclaration(node) {
@@ -301,11 +322,12 @@ class ClassDeclaration extends Declaration {
     constructor(parent, name, pos, end) {
         super(parent, pos, end);
         this.name = name;
-        this.explicitType = name;
+        this.explicitType = getType(name, () => new NormalType(name));
 
         this.staticBlock = new ClassStaticBlockDeclaration(parent);
 
         if (parent) {
+            this.fullName = parent.fullName + '.' + name;
             this.staticBlock.applyClosure();
 
             this.applyClosure();
@@ -343,7 +365,7 @@ class ClassDeclaration extends Declaration {
         }
 
         for (let member of this.members) {
-            printer.writeln(member);
+            printer.writeln(member.getText());
         }
         compileUtils.decreaseIndent();
 
@@ -352,6 +374,58 @@ class ClassDeclaration extends Declaration {
         } else {
             printer.code('}');
         }
+
+        return printer.getText();
+    }
+}
+
+class InterfaceDeclaration extends Declaration {
+    accessor;// 'public' | 'private' | 'protected'
+    isStatic;
+
+    members = [];
+
+    constructor(parent, name, pos, end) {
+        super(parent, pos, end);
+        this.name = name;
+        this.explicitType = getType(name, () => new NormalType(name));
+
+        this.applyClosure();
+        this.closure.var('this', this);
+        this.closure.var(name, this);
+
+        this.fullName = parent.fullName + '.' + name;
+    }
+
+    addMember(member) {
+        this.members.push(member);
+        this.closure.var(member.name, member);
+    }
+
+    forEachChild(cb) {
+        cb(this.staticBlock);
+        this.members.forEach(node => cb(node));
+    }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+
+        const printer = new Printer(compileUtils);
+        printer.writeModifiers(this);
+
+        printer.write('interface');
+
+        printer.write(this.name);
+
+        printer.write('{');
+
+        compileUtils.increaseIndent();
+        for (let member of this.members) {
+            printer.writeln(member.getText());
+            printer.code(';');
+        }
+        compileUtils.decreaseIndent();
+        printer.writeln('}');
 
         return printer.getText();
     }
@@ -420,7 +494,6 @@ class JavaModule extends ClassDeclaration {
 }
 
 class Identifier extends ASTNode {
-    implicitType;
     text;
 
     declaration;
@@ -499,7 +572,7 @@ function isFunction(node) {
 
 class ConstructorDeclaration extends MemberDeclaration {
     explicitReturnType;
-    implicitReturnType = VoidType;
+    implicitReturnType = getType('void');
     typeParameters = [];
     parameters = [];
     body;
@@ -507,6 +580,8 @@ class ConstructorDeclaration extends MemberDeclaration {
     constructor(parent, pos, end) {
         super(parent, pos, end);
         this.name = parent.name;
+        this.explicitType = parent.type;
+        this.explicitReturnType = parent.type;
         this.applyClosure();
     }
 
@@ -543,7 +618,7 @@ class ConstructorDeclaration extends MemberDeclaration {
 
 class MethodDeclaration extends MemberDeclaration {
     explicitReturnType;
-    implicitReturnType = new NormalType(VoidType);
+    implicitReturnType = getType('void');
     typeParameters = [];
     parameters = [];
     body;
@@ -589,7 +664,7 @@ class MethodDeclaration extends MemberDeclaration {
 
 class FunctionDeclaration extends Declaration {
     explicitReturnType;
-    implicitReturnType = VoidType;
+    implicitReturnType = getType('void');
     typeParameters = [];
     parameters = [];
     body;
@@ -618,7 +693,21 @@ class FunctionDeclaration extends Declaration {
 
 class ParameterDeclaration extends Declaration {
     dotDotDotToken;
-    initializer;
+    #initializer;
+
+    get initializer() {
+        return this.#initializer;
+    }
+
+    set initializer(value) {
+        this.#initializer = value;
+        if (value) {
+            const valueType = value.type;
+            if (valueType) {
+                this.implicitType = valueType;
+            }
+        }
+    }
 
     constructor(parent, name, pos, end) {
         super(parent, pos, end);
@@ -765,7 +854,7 @@ class VariableDeclarationList extends ASTNode {
 //   Closure   //
 //=============//
 class Block extends ASTNode {
-    implicitReturnType = VoidType;
+    implicitReturnType = getType('void');
     statements = [];
 
     constructor(parent, pos, end) {
@@ -865,6 +954,17 @@ class NewExpression extends ASTNode {
     constructor(parent, pos, end) {
         super(parent, pos, end);
     }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+
+        printer.write('new');
+        printer.write(this.expression.getText());
+        printer.writeArguments(this.arguments);
+
+        return printer.getText();
+    }
 }
 
 class IfStatement extends Statement {
@@ -889,6 +989,25 @@ class IfStatement extends Statement {
         cb(this.expression);
         cb(this.thenStatement);
         cb(this.elseStatement);
+    }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+
+        printer.write('if');
+        printer.write('(');
+        printer.code(this.expression.getText());
+        printer.code(')');
+
+        printer.writeBody(this.thenStatement);
+
+        if (this.elseStatement) {
+            printer.write('else');
+            printer.write(this.elseStatement.getText());
+        }
+
+        return printer.getText();
     }
 }
 
@@ -946,6 +1065,23 @@ class ForStatement extends IterationStatement {
         cb(this.incrementor);
         super.forEachChild(cb);
     }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+
+        printer.write('for');
+        printer.write('(');
+        printer.code(this.initializer.getText());
+        printer.code(';');
+        printer.code(this.condition.getText());
+        printer.code(';');
+        printer.code(this.incrementor.getText());
+        printer.code(')');
+        printer.writeBody(this.statement);
+
+        return printer.getText();
+    }
 }
 
 class ForInStatement extends IterationStatement {
@@ -960,6 +1096,23 @@ class ForInStatement extends IterationStatement {
         cb(this.initializer);
         cb(this.expression);
         super.forEachChild(cb);
+    }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+
+        printer.write('for');
+        printer.write('(');
+        printer.code(this.initializer.getText());
+        printer.code(':');
+        let expression = this.expression.getText();
+        printer.code(expression);
+        printer.code('.keySet()');
+        printer.code(')');
+        printer.writeBody(this.statement);
+
+        return printer.getText();
     }
 }
 
@@ -1039,9 +1192,11 @@ class ReturnStatement extends Statement {
 
         printer.write('return');
 
-        const expressionCode = this.expression.getText();
-        if (expressionCode) {
-            printer.write(expressionCode);
+        if (this.expression) {
+            const expressionCode = this.expression.getText();
+            if (expressionCode) {
+                printer.write(expressionCode);
+            }
         }
         return printer.getText();
     }
@@ -1106,6 +1261,10 @@ class ThrowStatement extends Statement {
 
     forEachChild(cb) {
         cb(this.expression);
+    }
+
+    getText() {
+        return 'throw ' + this.expression.getText();
     }
 }
 
@@ -1208,9 +1367,8 @@ class ParenthesizedExpression extends Expression {
 }
 
 class LambdaFunction extends ASTNode {
-    implicitType;
     explicitReturnType;
-    implicitReturnType = VoidType;
+    implicitReturnType = getType('void');
     typeParameters = [];
     parameters = [];
     body;
@@ -1430,7 +1588,7 @@ class Literal extends ASTNode {
 class TrueKeyword extends Literal {
 
     constructor(parent, pos, end) {
-        super(parent, BooleanType, 'true', pos, end);
+        super(parent, getType('boolean'), 'true', pos, end);
     }
 }
 
@@ -1438,7 +1596,7 @@ class TrueKeyword extends Literal {
 class FalseKeyword extends Literal {
 
     constructor(parent, pos, end) {
-        super(parent, BooleanType, 'false', pos, end);
+        super(parent, getType('boolean'), 'false', pos, end);
     }
 }
 
@@ -1454,9 +1612,11 @@ class ThisKeyword extends Literal {
 /// a = 1;
 class NumericLiteral extends Literal {
     constructor(parent, text, pos, end) {
-        let type = IntType;
+        let type = getType('int');
         if (text.indexOf('.') >= 0) {
-            type = DoubleType;
+            type = getType('double');
+        } else {
+            text.replace(/n$/, '');
         }
         super(parent, type, text, pos, end);
     }
@@ -1465,21 +1625,21 @@ class NumericLiteral extends Literal {
 /// a = 1n;
 class BigIntLiteral extends Literal {
     constructor(parent, text, pos, end) {
-        super(parent, IntType, text, pos, end);
+        super(parent, getType('int'), text.replace(/n$/, ''), pos, end);
     }
 }
 
 /// a = 'string';
 class StringLiteral extends Literal {
     constructor(parent, text, pos, end) {
-        super(parent, StringType, `"${text.replace(/\n/, '\\n')}"`, pos, end);
+        super(parent, getType('String'), `"${text.replace(/\n/, '\\n')}"`, pos, end);
     }
 }
 
 /// /^\d{11}$/
 class RegularExpressionLiteral extends Literal {
     constructor(parent, text, pos, end) {
-        super(parent, PatternType, `Pattern.compile("${text}")`, pos, end);
+        super(parent, getType('Pattern'), `Pattern.compile("${text}")`, pos, end);
     }
 }
 
@@ -1493,6 +1653,7 @@ module.exports = {
     Declaration,
     MemberDeclaration,
     ClassDeclaration,
+    InterfaceDeclaration,
     PropertyDeclaration,
     ConstructorDeclaration,
     MethodDeclaration,
@@ -1550,10 +1711,6 @@ module.exports = {
     Type,
     NormalType,
     ArrayType,
-    VoidType,
-    BooleanType,
-    IntType,
-    DoubleType,
-    StringType,
-    PatternType,
+    getType,
+    entityType,
 }

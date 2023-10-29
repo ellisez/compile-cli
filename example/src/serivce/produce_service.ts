@@ -11,12 +11,12 @@ export default class ProduceService {
         return product;
     }
 
-    onShelf(product, count=0) {
+    onShelf(product: Product, count=0) {
         product.count += count;
         product.isOnSale = true;
     }
 
-    offShelf(product) {
+    offShelf(product: Product) {
         product.isOnSale = false;
     }
 }
