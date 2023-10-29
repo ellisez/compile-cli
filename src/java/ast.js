@@ -238,7 +238,7 @@ class ArrayType extends Type {
     }
 
     getText() {
-        return this.elementType + '[]';
+        return this.elementType.getText() + '[]';
     }
 }
 
@@ -1286,6 +1286,16 @@ class PostfixUnaryExpression extends Expression {
     forEachChild(cb) {
         cb(this.operator);
         cb(this.operand);
+    }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+
+        printer.write(this.operand.getText());
+        printer.code(this.operator);
+
+        return printer.getText();
     }
 }
 
