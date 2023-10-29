@@ -775,7 +775,12 @@ class JavaParser {
         const argumentNodes = tsNode.arguments;
 
         const callExpression = new CallExpression(javaNode, tsNode.pos, tsNode.end);
-        callExpression.expression = this.visitNode(expression, callExpression, closure);
+        const javaExpression = this.visitNode(expression, callExpression, closure);
+        if (javaExpression instanceof Identifier &&
+            javaExpression.type && javaExpression.type.isFunction) {
+            javaExpression.text += '.call';
+        }
+        callExpression.expression = javaExpression;
         for (let argumentNode of argumentNodes) {
             const javaArgument = this.visitNode(argumentNode, callExpression, closure);
             callExpression.arguments.push(javaArgument);
