@@ -14,7 +14,7 @@ function testClass() {
     console.log('> ' + consumer.toString());
 
     console.log('2. Recharge 200.');
-    consumerService.recharge(consumer, 200);
+    consumerService.recharge(consumer, 200n);
     console.log('> balance = ' + consumer.balance);
 
     console.log('3. Create a Product instance.');

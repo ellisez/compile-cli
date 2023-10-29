@@ -298,6 +298,7 @@ class Declaration extends ASTNode {
 
     refs = [];
 
+    exportName;
     constructor(parent, name, pos, end) {
         super(parent, pos, end);
         this.name = name;
@@ -445,7 +446,7 @@ class JavaModule extends ClassDeclaration {
     imports = new Set();
     packageName;
 
-    isResolved = false;
+    namedBindings = new Map();
     fileName;
 
     constructor(project, fileName, packageName, name, pos, end) {

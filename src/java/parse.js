@@ -141,16 +141,9 @@ class JavaParser {
                     tsType = 'ArrayList';
                     break;
                 default:
-                    const declaration = closure.get(tsType);
+                    const declaration = module.namedBindings.get(tsType);
                     if (declaration) {
-                        const declarationModule = declaration.module;
-                        const modulePackage = declarationModule.fullName;
-                        const moduleName = declarationModule.name;
-                        const fullName = declaration.fullName;
-                        const queryPackage = fullName.substring(modulePackage.length);
-                        if (queryPackage) {
-                            tsType = moduleName + queryPackage;
-                        }
+                        tsType = declaration.exportName;
                     }
             }
             return new NormalType(tsType);
@@ -462,19 +455,30 @@ class JavaParser {
 
         const identifier = new Identifier(javaNode, tsNode.pos, tsNode.end);
         identifier.text = text;
-        const declaration = closure.get(text);
-        if (!declaration) {
-            let parentName = 'root'
-            const parentNode = tsNode.parent;
-            if (parentNode) {
-                parentName = this.#TSKindMap[parentNode.kind];
-            }
-            throw new ReferenceError(`${text} is not defined. parent ${parentName}, file ${javaNode.module.fileName}.`);
+        let declaration = closure.get(text);
+        if (declaration) {
+            identifier.implicitType = declaration.type;
+            identifier.declaration = declaration;
+            declaration.refs.push(identifier);
+            return identifier;
         }
-        identifier.implicitType = declaration.type;
-        identifier.declaration = declaration;
-        declaration.refs.push(identifier);
-        return identifier;
+
+        const module = javaNode.module;
+        declaration = module.namedBindings.get(text);
+        if (declaration) {
+            identifier.text = declaration.exportName;
+            identifier.implicitType = declaration.type;
+            identifier.declaration = declaration;
+            declaration.refs.push(identifier);
+            return identifier;
+        }
+
+        let parentName = 'root'
+        const parentNode = tsNode.parent;
+        if (parentNode) {
+            parentName = this.#TSKindMap[parentNode.kind];
+        }
+        throw new ReferenceError(`${text} is not defined. parent ${parentName}, file ${module.fileName}.`);
     }
 
     ///a.b
@@ -541,7 +545,8 @@ class JavaParser {
         const moduleClosure = module.closure;
         if (importClause.name) {
             const moduleNamed = importClause.name.escapedText;
-            closure.var(moduleNamed, module);
+            module.exportName = module.name;
+            currentModule.namedBindings.set(moduleNamed, module);
         }
 
         const namedBindings = importClause.namedBindings;
@@ -552,20 +557,25 @@ class JavaParser {
                 let propertyName = propertyBinding;
                 if (element.propertyName) {
                     propertyName = element.propertyName.escapedText;
-                }
 
-                if (propertyName === 'default') {
-                    const exportDefault = moduleClosure.local('exportDefault');
-                    if (exportDefault) {
-                        closure.var(propertyBinding, exportDefault);
-                    } else {
-                        closure.var(propertyBinding, module);
+                    if (propertyName === 'default') {
+                        let declaration = moduleClosure.local('exportDefault');
+                        if (declaration) {
+                            declaration.exportName = module.name + '.' + declaration.name;
+                        } else {
+                            declaration = module;
+                            declaration.exportName = module.name;
+                        }
+                        currentModule.namedBindings.set(propertyBinding, declaration);
+                        return;
                     }
-                } else {
-                    const propertyDeclaration = moduleClosure.local(propertyName);
-                    closure.var(propertyBinding, propertyDeclaration);
-                }
 
+                }
+                const declaration = moduleClosure.local(propertyName);
+                if (declaration) {
+                    declaration.exportName = module.name + '.' + declaration.name
+                    currentModule.namedBindings.set(propertyBinding, declaration);
+                }
             }
         }
     }
@@ -711,7 +721,12 @@ class JavaParser {
                     javaNode: parentNode, pos: declaration.pos, end: declaration.end, closure
                 });
 
-                propertyDeclaration.initializer = this.visitNode(initializer, propertyDeclaration, closure);
+                const javaInitializer = this.visitNode(initializer, propertyDeclaration, closure);
+                if (javaInitializer instanceof Identifier &&
+                    javaInitializer.type && javaInitializer.type.isFunction) {
+                    javaInitializer.text = javaInitializer.text.replace(/\.([^\.]+)$/, '::$1');
+                }
+                propertyDeclaration.initializer = javaInitializer;
                 parentNode.addMember(propertyDeclaration);
             }
         } else {
