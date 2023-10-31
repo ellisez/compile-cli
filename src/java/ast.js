@@ -203,7 +203,6 @@ class Project {
 // Declaration //
 //=============//
 class Type {
-
     isFunction = false;
 
     getText() {
@@ -241,6 +240,7 @@ class NormalType extends Type {
 }
 
 class ArrayType extends Type {
+    isDotDotDot = false;
     elementType;
 
     constructor(elementType, isFunction = false) {
@@ -249,6 +249,9 @@ class ArrayType extends Type {
     }
 
     getText() {
+        if (this.isDotDotDot) {
+            return this.elementType.getText() + '...';
+        }
         return this.elementType.getText() + '[]';
     }
 }
@@ -693,7 +696,6 @@ class FunctionDeclaration extends Declaration {
 }
 
 class ParameterDeclaration extends Declaration {
-    dotDotDotToken;
     #initializer;
 
     get initializer() {
@@ -1389,6 +1391,17 @@ class LambdaFunction extends ASTNode {
     forEachChild(cb) {
         this.parameters.forEach(node => cb(node));
         cb(this.body);
+    }
+
+    getText() {
+        const compileUtils = this.module.project.compileUtils;
+        const printer = new Printer(compileUtils);
+
+        printer.writeParams(this.parameters);
+        printer.write('->')
+        printer.writeBody(this.body);
+
+        return printer.getText();
     }
 }
 

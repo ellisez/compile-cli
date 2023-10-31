@@ -159,9 +159,6 @@ class JavaParser {
                 name.escapedText === 'log' || name.escapedText === 'error')) {
                 const systemAccess = new PropertyAccessExpression(javaNode, tsNode.pos, tsNode.end);
 
-                const printIdentifier = new Identifier(systemAccess, name.pos, name.end);
-                printIdentifier.text = 'println';
-
                 const functionDeclaration = new FunctionDeclaration(javaNode, '');
                 const paramType1 = getType('String');
                 const param1 = new ParameterDeclaration(functionDeclaration, 'param1');
@@ -169,18 +166,14 @@ class JavaParser {
                 functionDeclaration.parameters = [param1];
                 functionDeclaration.typeParameters = [paramType1];
 
-                printIdentifier.implicitType = this.compileUtils.getFunctionType(functionDeclaration);
+                systemAccess.implicitType = this.compileUtils.getFunctionType(functionDeclaration);
 
-                systemAccess.name = printIdentifier;
+                systemAccess.name = 'println';
 
                 const outAccess = new PropertyAccessExpression(systemAccess, expression.pos, expression.end);
                 systemAccess.expression = outAccess;
 
-                const outIdentifier = new Identifier(outAccess, name.pos, name.end);
-                outIdentifier.text = 'out';
-                outIdentifier.implicitType = 'Output';
-
-                outAccess.name = outIdentifier;
+                outAccess.name = 'out';
 
                 const systemIdentifier = new Identifier(outAccess, name.pos, name.end);
                 systemIdentifier.text = 'System';
@@ -777,7 +770,9 @@ class JavaParser {
         const callExpression = new CallExpression(javaNode, tsNode.pos, tsNode.end);
         const javaExpression = this.visitNode(expression, callExpression, closure);
         if (javaExpression instanceof Identifier &&
-            javaExpression.type && javaExpression.type.isFunction) {
+            javaExpression.type && javaExpression.type.isFunction &&
+            ( javaExpression.declaration instanceof VariableDeclaration ||
+                javaExpression.declaration instanceof PropertyDeclaration)) {
             javaExpression.text += '.call';
         }
         callExpression.expression = javaExpression;
@@ -873,21 +868,28 @@ class JavaParser {
             }
         } else {
             if (javaNode instanceof JavaModule) {
-                const propertyDeclaration = this.createPropertyDeclaration({
-                    accessor, isStatic, isFinal, type, name,
-                    javaNode, pos, end, closure
+                const methodDeclaration = this.createMethodDeclaration({
+                    accessor, isStatic, isFinal, type, name, parameters, body, javaNode, pos, end,
                 });
-
-                const initializer = this.createLambdaFunction({
-                    type, parameters, body, javaNode: propertyDeclaration, name, pos, end
-                });
-                propertyDeclaration.initializer = initializer;
-                propertyDeclaration.implicitType = initializer.type;
-                javaNode.addMember(propertyDeclaration);
+                javaNode.addMember(methodDeclaration);
             } else {
-                return this.createLambdaFunction({
-                    type, parameters, body, javaNode, pos, end,
-                })
+                if (name) {
+                    const propertyDeclaration = this.createPropertyDeclaration({
+                        accessor, isStatic, isFinal, type, name,
+                        javaNode, pos, end, closure
+                    });
+
+                    const initializer = this.createLambdaFunction({
+                        type, parameters, body, javaNode: propertyDeclaration, name, pos, end
+                    });
+                    propertyDeclaration.initializer = initializer;
+                    propertyDeclaration.implicitType = initializer.type;
+                    return propertyDeclaration;
+                } else {
+                    return this.createLambdaFunction({
+                        type, parameters, body, javaNode, pos, end,
+                    })
+                }
             }
         }
     }
@@ -1178,6 +1180,7 @@ class JavaParser {
         const paramName = name.escapedText;
         const type = tsNode.type;
         const initializer = tsNode.initializer;
+        const dotDotDotToken = tsNode.dotDotDotToken;
 
         const pos = tsNode.pos;
         const end = tsNode.end;
@@ -1185,6 +1188,9 @@ class JavaParser {
         const parameterDeclaration = new ParameterDeclaration(javaNode, paramName, pos, end);
 
         parameterDeclaration.explicitType = this.TSType(type, parameterDeclaration, closure);
+        if (dotDotDotToken) {
+            parameterDeclaration.explicitType.isDotDotDot = true;
+        }
 
         parameterDeclaration.initializer = this.visitNode(initializer, parameterDeclaration, closure);
 
