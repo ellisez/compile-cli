@@ -1,14 +1,14 @@
-const ts = require('typescript');
 const fs = require('node:fs');
 const path = require('node:path');
-const json = require('../json.js');
-const { typeFinder } = require('./type.js');
+const json = require('../json');
+const global = require('./global');
 
 const libDir = path.join(__dirname, 'library');
 const libConfig = path.join(libDir, 'tsconfig.json');
 const libOptions = json.ofFile(libConfig);
 
 libOptions.compilerOptions.rootDir = libDir;
+libOptions.compilerOptions.basePackage = '';
 
 const entryFiles = [];
 
@@ -105,11 +105,10 @@ function loadLibrary() {
 
     const project = parser.project;
 
-    functionInterface = project.functionInterface;
     moduleMap = project.moduleMap;
 
     for (let [_, value] of moduleMap) {
-        typeFinder.set(value.name, value);
+        global.set(value.name.text, value);
     }
 
 }

@@ -65,7 +65,7 @@ class GenericType extends BaseType {
 
     constructor(moduleFullName, typeName) {
         super(moduleFullName);
-        this._typeName = typeName;
+        this.__typeName = typeName;
     }
 
     getRuntime(typeParameters) {
@@ -119,7 +119,6 @@ class FunctionType extends GenericType {
         super();
         this.parameters = parameters;
         this.returnType = returnType;
-
     }
 
     getRuntime(typeParameters) {
@@ -269,6 +268,7 @@ global.set(VoidType.text, VoidType)
     .set(IntType.text, IntType)
     .set(DoubleType.text, DoubleType)
     .set(BigintType.text, BigintType)
+    .set(StringType.text, StringType)
     .set(ObjectType.text, ObjectType)
 ;
 

@@ -7,7 +7,7 @@ const {
     VoidType,
     IntType,
     DoubleType,
-    typeFinder,
+    typeFinder, TypeParameter,
 } = require("./type");
 const { PrintOptions, Printer } = require('./printer');
 const { BooleanType, StringType } = require("./type");
@@ -219,9 +219,6 @@ class Project {
     // Map
     moduleMap = new Map();
 
-    // JavaModule
-    functionInterface;
-
     compileUtils;
 
 }
@@ -256,6 +253,10 @@ class ClassDeclaration extends Declaration {
             this.closure.var('this', this);
             this.closure.var(text, this);
         }
+    }
+
+    get name() {
+        return this.__name;
     }
 
     set name(name) {
@@ -415,7 +416,9 @@ class JavaModule extends ClassDeclaration {
         super(null, name, pos, end);
         this.fileName = fileName;
         this.packageName = packageName;
-        this.fullName = packageName + '.' + name;
+        if (packageName) {
+            this.fullName = packageName + '.' + name;
+        }
         this.inferType = new ClassType(this.fullName, name);
 
         this.module = this;
@@ -557,6 +560,7 @@ class ConstructorDeclaration extends MemberDeclaration {
     __initialReturnType;
 
     parameters = [];
+    parametersType = [];
     body;
 
     constructor(parent, pos, end) {
@@ -565,12 +569,12 @@ class ConstructorDeclaration extends MemberDeclaration {
         this.applyClosure();
 
         const moduleFullName = this.module ? this.module.fullName : null;
-        this.inferType = new FunctionType(moduleFullName, this.typeParameters, this.initialReturnType);
+        this.inferType = new FunctionType(moduleFullName, this.parametersType, this.initialReturnType);
     }
 
     addParameter(parameter) {
         this.parameters.push(parameter);
-        this.typeParameters.push(parameter.type);
+        this.parametersType.push(parameter.type);
         this.closure.var(parameter.name.text, parameter);
     }
 
@@ -614,6 +618,8 @@ class MethodDeclaration extends MemberDeclaration {
     __inferReturnType = VoidType;
 
     parameters = [];
+    parametersType = [];
+    typeParameters = [];
     body;
 
     constructor(parent, name, pos, end) {
@@ -621,12 +627,12 @@ class MethodDeclaration extends MemberDeclaration {
         this.applyClosure();
 
         const moduleFullName = this.module ? this.module.fullName : null;
-        this.inferType = new FunctionType(moduleFullName, this.typeParameters, this.initialReturnType);
+        this.inferType = new FunctionType(moduleFullName, this.parametersType, this.initialReturnType);
     }
 
     addParameter(parameter) {
         this.parameters.push(parameter);
-        this.typeParameters.push(parameter.type);
+        this.parametersType.push(parameter.type);
         this.closure.var(parameter.name, parameter);
     }
 
@@ -680,8 +686,7 @@ class ParameterDeclaration extends Declaration {
     __initializer;
 
     get type() {
-        const moduleFullName = this.module ? this.module.fullName : null;
-        return new ParameterType(moduleFullName, super.type, this.initializer);
+        return new TypeParameter(super.type, this.initializer);
     }
 
     get initializer() {
@@ -705,8 +710,7 @@ class ParameterDeclaration extends Declaration {
     }
 
     constructor(parent, name, pos, end) {
-        super(parent, pos, end);
-        this.name = name;
+        super(parent, name, pos, end);
         if (parent.fullName) {
             this.fullName = parent.fullName + '.' + name.getText();
         }
@@ -760,9 +764,8 @@ class VariableDeclaration extends Declaration {
     }
 
     constructor(parent, name, pos, end) {
-        super(parent, pos, end);
-        this.name = name;
-        this.fullName = parent.fullName + '.' + name.getText();
+        super(parent, name, pos, end);
+        this.fullName = parent.fullName + '.' + name;
     }
 
     forEachChild(cb) {
@@ -1695,6 +1698,8 @@ class LambdaFunction extends ASTNode {
     __inferReturnType = VoidType;
 
     arguments = [];
+    argumentsType = [];
+    parametersType = [];
     body;
 
     constructor(parent, pos, end) {
@@ -1702,13 +1707,13 @@ class LambdaFunction extends ASTNode {
         this.applyClosure();
 
         const moduleFullName = this.module ? this.module.fullName : null;
-        this.inferType = new FunctionType(moduleFullName, this.typeParameters, this.initialReturnType);
+        this.inferType = new FunctionType(moduleFullName, this.argumentsType, this.initialReturnType);
     }
 
     addArgument(arg) {
         const index = this.arguments.length;
         this.arguments.push(arg);
-        this.typeParameters.push(arg.type);
+        this.argumentsType.push(arg.type);
         this.closure.var(arg.name, arg);
         if (arg instanceof NamedEntity) {
             arg.replaceWith = (newNode) => {
@@ -2061,6 +2066,7 @@ exports.QualifiedName = QualifiedName;
 class TypeReference extends ASTNode {
     __typeName;
 
+    arguments = [];
     typeArguments = [];
 
     __type;

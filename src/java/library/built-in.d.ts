@@ -1,3 +1,13 @@
+/// declaration
+interface Object {}
+interface String {}
+interface Boolean {}
+interface Number {}
+interface int {}
+interface BigInt {}
+interface double {}
+
+/// implements
 interface Object {
     toString(): String;
     ['+'](string: String): String;

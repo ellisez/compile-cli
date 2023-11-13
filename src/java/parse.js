@@ -4,7 +4,7 @@ const { readConfig, versionObject } = require('../config');
 const log = require('../log');
 const fs = require('node:fs');
 const {
-    toCamel, toFileName, toPackageName, toClassName, toClassInfo, toJavaFile,
+    toFileName, toPackageName, toClassName, toClassInfo, toJavaFile,
 } = require("./utils");
 const {
     Closure,
@@ -93,11 +93,13 @@ function loadLibrary() {
 
 class JavaBundle {
     #project;
+    #basePackage;
 
     #sourceMap = new Map();
 
-    constructor(project) {
-        this.#project = project;
+    constructor(project, basePackage) {
+        this.#project = project
+        this.#basePackage = basePackage;
     }
 
     getProject() {
@@ -112,7 +114,7 @@ class JavaBundle {
 
     writeBundle() {
         this.#sourceMap.forEach((source, modulePackage) => {
-            const fileName = toJavaFile(modulePackage);
+            const fileName = toJavaFile(modulePackage, this.#basePackage);
             fs.writeFileSync(fileName, source);
         })
 
@@ -130,6 +132,7 @@ for (let key in ts.SyntaxKind) {
 
 class JavaParser {
     rootDir;
+    basePackage;
     entryFiles = [];
     tsOptions;
     tsProgram;
@@ -139,40 +142,6 @@ class JavaParser {
     compileUtils;
 
     tsUtils;
-
-    // typeResolver(tsType, module, closure) {
-    //     if (tsType) {
-    //         switch (tsType) {
-    //             case 'number':
-    //                 tsType = 'double';
-    //                 break;
-    //             case 'bigint':
-    //                 tsType = 'int';
-    //                 break;
-    //             case 'string':
-    //                 tsType = 'String';
-    //                 break;
-    //             case 'Set':
-    //                 const hashSetType = new HashSetType();
-    //                 module.imports.add(hashSetType.library);
-    //                 return hashSetType;
-    //             case 'Map':
-    //                 const hashMapType = new HashMapType();
-    //                 module.imports.add(hashMapType.library);
-    //                 return hashMapType;
-    //             case 'Array':
-    //                 const arrayListType = new ArrayListType();
-    //                 module.imports.add(arrayListType.library);
-    //                 return arrayListType;
-    //             default:
-    //                 const declaration = module.namedBindings.get(tsType);
-    //                 if (declaration) {
-    //                     tsType = declaration.exportName;
-    //                 }
-    //         }
-    //         return new VariableType(tsType);
-    //     }
-    // }
 
     entityResolver = {
         TSPropertyAccessExpression(tsNode, javaNode, closure) {
@@ -248,10 +217,11 @@ class JavaParser {
         const compilerOptions = tsOptions.compilerOptions;
         const rootDir = compilerOptions.rootDir;
         if (rootDir) {
-            this.rootDir = path.resolve(rootDir);
+            this.rootDir = path.resolve(rootDir);//.replace(/\\/g, '/');
         } else {
-            this.rootDir = process.cwd();
+            this.rootDir = process.cwd();//.replace(/\\/g, '/');
         }
+        this.basePackage = compilerOptions.basePackage ?? config.java.package;
     }
 
     parse(entryFiles) {
@@ -264,7 +234,7 @@ class JavaParser {
         for (const sourceFile of sourceFiles) {
             this.TSSourceFile(sourceFile);
         }
-        return new JavaBundle(this.project);
+        return new JavaBundle(this.project, this.basePackage);
     }
 
     TSProgram() {
@@ -288,7 +258,7 @@ class JavaParser {
             this.project.compileUtils = this.compileUtils;
             //
             const fullName = `${config.java.package}.FunctionInterface`;
-            const fileName = toFileName(fullName, this.rootDir);
+            const fileName = toFileName(fullName, this.basePackage, this.rootDir);
             const moduleMap = this.project.moduleMap;
             let module = moduleMap.get(fullName);
             if (!module) {
@@ -304,7 +274,7 @@ class JavaParser {
         const pos = sourceFile.pos;
         const end = sourceFile.end;
 
-        const packageName = toPackageName(fileName, this.rootDir);
+        const packageName = toPackageName(fileName, this.basePackage, this.rootDir);
         const name = toClassName(fileName);
 
         // ast
@@ -403,9 +373,11 @@ class JavaParser {
             methodDeclaration.addParameter(javaParameter);
         }
 
-        const javaBlock = this.TSBlock(body, methodDeclaration, methodDeclaration.closure);
-        methodDeclaration.body = javaBlock;
-        methodDeclaration.inferReturnType = javaBlock.inferReturnType;
+        if (body) {
+            const javaBlock = this.TSBlock(body, methodDeclaration, methodDeclaration.closure);
+            methodDeclaration.body = javaBlock;
+            methodDeclaration.inferReturnType = javaBlock.inferReturnType;
+        }
 
         return methodDeclaration;
     }
@@ -594,7 +566,7 @@ class JavaParser {
         if (declaration) {
             identifier.inferType = declaration.type;
             identifier.declaration = declaration;
-            declaration.refs.push(identifier);
+            declaration.refs.add(identifier);
             return identifier;
         }
 
@@ -604,7 +576,7 @@ class JavaParser {
             identifier.text = declaration.exportName;
             identifier.inferType = declaration.type;
             identifier.declaration = declaration;
-            declaration.refs.push(identifier);
+            declaration.refs.add(identifier);
             return identifier;
         }
 
@@ -677,7 +649,7 @@ class JavaParser {
         const fileDir = path.dirname(currentModule.fileName);
 
         let modulePath = path.resolve(fileDir, moduleSpecifier);
-        const { packageName, fullName } = toClassInfo(modulePath, this.rootDir);
+        const { packageName, fullName } = toClassInfo(modulePath, this.basePackage, this.rootDir);
         const modulePackage = fullName;
 
         if (packageName !== currentModule.packageName) {
@@ -813,7 +785,7 @@ class JavaParser {
         const binaryExpression = new BinaryExpression(javaNode, tsNode.pos, tsNode.end);
         binaryExpression.left = this.visitNode(left, binaryExpression, closure);
         binaryExpression.right = this.visitNode(right, binaryExpression, closure);
-        binaryExpression.operator = this.compileUtils.parseOperator(operatorToken);
+        binaryExpression.operator = this.tsUtils.parseOperator(operatorToken);
 
         return binaryExpression;
     }
@@ -1387,6 +1359,78 @@ class JavaParser {
         return new RegularExpressionLiteral(javaNode, tsNode.text, tsNode.pos, tsNode.end);
     }
 
+    /// declare module '/xxx/yyy'
+    /// declare namespace zzz
+    TSModuleDeclaration(tsNode, javaNode, closure) {
+        const name = tsNode.name;
+        const body = tsNode.body;
+
+        const { isDeclare } = this.tsUtils.parseModifiers(tsNode);
+
+        if (isDeclare) {
+            let text;
+            if (name.kind === ts.SyntaxKind.Identifier) {
+                text = name.escapedText;
+            } else if (name.kind === ts.SyntaxKind.StringLiteral) {
+                text = name.text;
+            }
+
+            const filename = javaNode.module.fileName;
+
+            const javaModule = new JavaModule(this.project, filename, null, text, tsNode.pos, tsNode.end);
+
+            for (let statement of body.statements) {
+                this.visitNode(statement, javaModule, javaModule.closure);
+            }
+            global.set(text, javaModule);
+        }
+    }
+
+    /// interface xxx {}
+    TSInterfaceDeclaration(tsNode, javaNode, closure) {
+        const name = tsNode.name;
+
+        const text = name.escapedText;
+
+        const filename = javaNode.module.fileName;
+
+        const classDeclaration = new ClassDeclaration(javaNode, text, tsNode.pos, tsNode.end);
+
+        for (let member of tsNode.members) {
+            const javaMember = this.visitNode(member, classDeclaration, classDeclaration.closure);
+            classDeclaration.addMember(javaMember);
+        }
+
+        if (filename.endsWith('.d.ts') && javaNode instanceof JavaModule) {
+            global.set(text, classDeclaration);
+            return;
+        }
+        return classDeclaration;
+    }
+
+    /// interface xxx { ['methodSignature']() {} }
+    TSMethodSignature(tsNode, javaNode, closure) {
+        const name = tsNode.name;
+        const type = tsNode.type;
+        const parameters = tsNode.parameters;
+        const body = tsNode.body;
+
+        const pos = tsNode.pos;
+        const end = tsNode.end;
+
+        const { accessor, isStatic, isFinal } = this.tsUtils.parseModifiers(tsNode);
+
+        let text;
+        if (name.kind === ts.SyntaxKind.Identifier) {
+            text = name.escapedText;
+        } else if (name.kind === ts.SyntaxKind.ComputedPropertyName) {
+            text = name.expression.text;
+        }
+
+        return this.createMethodDeclaration({
+            accessor, isStatic, isFinal, type, name:text, parameters, body, javaNode, pos, end
+        });
+    }
 }
 
 module.exports = JavaParser;
