@@ -1,128 +1,46 @@
 //=============//
 //    print    //
 //=============//
-class Printer {
-    compileUtils;
-    #text = '';
-
-    constructor(compileUtils) {
-        this.compileUtils = compileUtils;
-    }
-
-    getText() {
-        return this.#text;
-    }
-
-    code(code, pre = '') {
-        if (code) {
-            if (this.#text) {
-                this.#text += pre;
-            }
-            this.#text += code;
-        }
-    }
-
-    write(node, pre = ' ') {
-        if (node) {
-            let code = node.toString();
-            if (node instanceof ASTNode) {
-                code = node.getText();
-            }
-            this.code(code, pre);
-        }
-    }
-
-    writeln(node) {
-        const newLine = this.compileUtils.newLine;
-        if (node) {
-            this.write(node, newLine);
-        } else {
-            this.#text += newLine;
-        }
-    }
-
-    writeType(type, defaultValue = '') {
-        if (type) {
-            this.write(type.getText());
-            return;
-        }
-        this.write(defaultValue);
-    }
-
-    writeModifiers(member) {
-        if (member.accessor) {
-            this.write(member.accessor);
-        }
-        if (member.isStatic) {
-            this.write('static');
-        }
-        if (member.isFinal) {
-            this.write('final');
-        }
-    }
-
-    writeParams(parameters) {
-        const paramPrinter = new Printer();
-        for (let parameter of parameters) {
-            paramPrinter.write(parameter.getText(), ', ');
-        }
-        this.code('(');
-        this.code(paramPrinter.getText());
-        this.code(')');
-    }
-
-    writeBody(body) {
-        if (body) {
-            this.write('{');
-            this.compileUtils.increaseIndent();
-            const bodySegment = body.getText();
-            if (body.statements.length) {
-                this.writeln(bodySegment);
-                this.compileUtils.decreaseIndent();
-                this.writeln('}');
-            } else {
-                this.compileUtils.decreaseIndent();
-                this.code('}');
-            }
-        }
-    }
-
-    writeArguments(args) {
-        if (args) {
-            const paramPrinter = new Printer();
-            for (let arg of args) {
-                paramPrinter.write(arg.getText(), ', ');
-            }
-            this.code('(');
-            this.code(paramPrinter.getText());
-            this.code(')');
-        }
-    }
-}
+const {
+    ClassType,
+    FunctionType,
+    VoidType,
+    IntType,
+    DoubleType,
+    typeFinder,
+} = require("./type");
+const { PrintOptions, Printer } = require('./printer');
+const { BooleanType, StringType } = require("./type");
+const global = require("./global");
 
 //============//
 //  ASTNode  //
 //===========//
+
 class Closure {
+    // javaModule
     module;
-
+    // astNode
     parent;
-
-    variables = {};
+    // <string, Declaration | Type>
+    variables = new Map();
 
     constructor(parent) {
         this.parent = parent;
     }
 
+    // Declaration | Type
     get(name) {
         const compileUtils = this.module.project.compileUtils;
         return compileUtils.getVariable(this, name);
     }
 
+    // boolean
     has(name) {
-        return this.variables.hasOwnProperty(name);
+        return this.variables.has(name);
     }
 
+    // boolean
     isTop() {
         return !this.parent;
     }
@@ -137,33 +55,45 @@ class Closure {
         compileUtils.newVariable(this, name, declaration);
     }
 
+    // Declaration | Type
     local(name) {
-        return this.variables[name];
+        return this.variables.get(name);
+    }
+
+    replace(oldName, valueName, declaration) {
+        if (oldName) {
+            this.variables.remove(oldName);
+        }
+        this.variables.put(valueName, declaration);
     }
 }
 
+exports.Closure = Closure;
+//==============//
+//   ASTNode   //
+//=============//
 class ASTNode {
+    // javaModule
     module;
+    // Closure
     closure;
+    // ASTNode
     parent;
+    // string
     kind;
+    // number
     pos;
+    // number
     end;
-    #fullName;
-
-    explicitType;
-    implicitType;
-
-    get type() {
-        return this.explicitType || this.implicitType;
-    }
+    // string
+    __fullName;
 
     get fullName() {
-        return this.#fullName;
+        return this.__fullName;
     }
 
     set fullName(fullName) {
-        this.#fullName = fullName;
+        this.__fullName = fullName;
     }
 
     constructor(parent, pos, end) {
@@ -176,6 +106,12 @@ class ASTNode {
         this.kind = this.constructor.toString().match(/^class\s+(\w+)/)[1];
     }
 
+    // Printer
+    createPrinter() {
+        return new Printer(this.module.printOptions);
+    }
+
+    // string
     getText() {
     }
 
@@ -192,157 +128,170 @@ class ASTNode {
 
 }
 
+exports.ASTNode = ASTNode;
+
+// NamedEntity: Identifier | PropertyAccessExpression | QualifiedName
+
+class NamedEntity extends ASTNode {
+    // Type
+    initialType;
+    // Type
+    inferType;
+
+    // ASTNode
+    initialValue;
+
+    get type() {
+        return this.initialType || this.inferType;
+    }
+
+    constructor(parent, pos, end) {
+        super(parent, pos, end);
+    }
+
+    // (ASTNode):void;
+    replaceWith;
+}
+
+exports.NamedEntity = NamedEntity;
+
+// declaration: JavaModule | ClassDeclaration | ConstructorDeclaration | PropertyDeclaration | MethodDeclaration | VariableDeclaration | ParameterDeclaration
+class Declaration extends ASTNode {
+    // boolean
+    isFinal;
+
+    // identifier
+    __name;
+
+    // Type
+    initialType;
+    // Type
+    inferType;
+
+    // ASTNode
+    initialValue;
+
+    get type() {
+        return this.initialType || this.inferType;
+    }
+
+    get name() {
+        return this.__name;
+    }
+
+    set name(name) {
+        if (this.__name !== name) {
+            if (this.__name) {
+                this.refs.delete(this.__name);
+            }
+            this.refs.add(name);
+
+            name.replaceWith = (newNode) => {
+                if (newNode instanceof Identifier) {
+                    this.name = newNode;
+                }
+                throw new TypeError(`${this.kind}.replaceWith() called must be a Identifier.`)
+            }
+        }
+        this.__name = name;
+    }
+
+    // { identifier }
+    refs = new Set();
+
+    exportName;
+
+    constructor(parent, name, pos, end) {
+        super(parent, pos, end);
+        let id = name;
+        if (typeof name === 'string') {
+            id = new Identifier(this, name, pos, end);
+        }
+        this.name = id;
+    }
+
+}
+
+exports.Declaration = Declaration;
+
+
 class Project {
+    // Map
     moduleMap = new Map();
+
+    // JavaModule
+    functionInterface;
 
     compileUtils;
 
 }
 
+exports.Project = Project;
 //==============//
 // Declaration //
 //=============//
-class Type {
-    isFunction = false;
-
-    getText() {
-
-    }
-}
-
-class NormalType extends Type {
-    typeName;
-
-    typeArguments = [];
-
-    elementType;
-
-    constructor(typeName, typeArguments = []) {
-        super();
-        this.typeName = typeName;
-        this.typeArguments = typeArguments;
-    }
-
-    getText() {
-        let code = this.typeName;
-        if (this.typeArguments.length > 0) {
-            let typeArgumentCode = '';
-            for (let typeArgument of this.typeArguments) {
-                if (typeArgumentCode) {
-                    typeArgumentCode += ', ';
-                }
-                typeArgumentCode += typeArgument.getText();
-            }
-            code += `<${typeArgumentCode}>`;
-        }
-        return code;
-    }
-}
-
-class ArrayType extends Type {
-    isDotDotDot = false;
-    elementType;
-
-    constructor(elementType, isFunction = false) {
-        super();
-        this.elementType = elementType;
-    }
-
-    getText() {
-        if (this.isDotDotDot) {
-            return this.elementType.getText() + '...';
-        }
-        return this.elementType.getText() + '[]';
-    }
-}
-
-function getType(name, newFun) {
-    let newVar = typeFinder.get(name);
-    if (!newVar && newFun) {
-        newVar = newFun();
-        typeFinder.set(name, newVar);
-    }
-    return newVar;
-}
-
-function entityType(typeName) {
-    getType(typeName, () => new NormalType(typeName));
-    return typeFinder;
-}
-
-const typeFinder = new Map();
-entityType('void');
-entityType('boolean');
-entityType('int');
-entityType('double');
-entityType('String');
-entityType('Pattern');
-
-//==============//
-// Declaration //
-//=============//
-class Declaration extends ASTNode {
-    isFinal;
-
-    #name;
-
-    get name() {
-        return this.#name;
-    }
-
-    set name(name) {
-        if (this.#name !== name) {
-            for (let ref of this.refs) {
-                ref.text = name;
-            }
-        }
-        this.#name = name;
-    }
-
-    refs = [];
-
-    exportName;
-    constructor(parent, name, pos, end) {
-        super(parent, pos, end);
-        this.name = name;
-    }
-
-}
-
-function isDeclaration(node) {
-    return node instanceof Declaration;
-}
-
 class ClassDeclaration extends Declaration {
     accessor;// 'public' | 'private' | 'protected'
     isStatic;
 
-    members = [];
+    members = new Map();
 
     staticBlock;
 
     constructors = [];
 
-    constructor(parent, name, pos, end) {
-        super(parent, pos, end);
-        this.name = name;
-        this.explicitType = getType(name, () => new NormalType(name));
-
-        this.staticBlock = new ClassStaticBlockDeclaration(parent);
+    constructor(parent, text, pos, end) {
+        super(parent, text, pos, end);
 
         if (parent) {
-            this.fullName = parent.fullName + '.' + name;
+            this.fullName = parent.fullName + '.' + text;
+            this.inferType = new ClassType(this.fullName, text);
+
+            this.staticBlock = new ClassStaticBlockDeclaration(parent);
+
+
             this.staticBlock.applyClosure();
 
             this.applyClosure();
             this.closure.var('this', this);
-            this.closure.var(name, this);
+            this.closure.var(text, this);
         }
     }
 
+    set name(name) {
+        const oldName = this.__name;
+        if (oldName !== name) {
+            let oldText = undefined;
+            if (oldName) {
+                oldText = oldName.text;
+                this.refs.remove(oldName);
+                this.members.remove(oldText);
+            }
+            this.refs.add(name);
+            if (this.members) {
+                this.members.set(name.text, this);
+            }
+            if (this.inferType) {
+                this.inferType.text = oldText;
+            }
+            if (this.closure) {
+                this.closure.replace(oldText, name.text, this);
+            }
+
+            name.replaceWith = (newNode) => {
+                if (newNode instanceof Identifier) {
+                    this.name = newNode;
+                }
+                throw new TypeError(`${this.kind}.replaceWith() called must be a Identifier.`)
+            }
+        }
+        this.__name = name;
+    }
+
     addMember(member) {
-        this.members.push(member);
-        this.closure.var(member.name, member);
+        this.members.set(member.name.text, member);
+        this.inferType.members.set(member.name.text, member.type);
+        this.closure.var(member.name.text, member);
     }
 
     forEachChild(cb) {
@@ -351,29 +300,27 @@ class ClassDeclaration extends Declaration {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
         printer.writeModifiers(this);
 
         printer.write('class');
 
-        printer.write(this.name);
+        printer.write(this.name.getText());
 
         printer.write('{');
 
-        compileUtils.increaseIndent();
+        printer.increaseIndent();
         const staticBlockCode = this.staticBlock.getText();
         if (staticBlockCode) {
             printer.writeln(staticBlockCode);
         }
 
-        for (let member of this.members) {
+        for (let [_, member] of this.members) {
             printer.writeln(member.getText());
         }
-        compileUtils.decreaseIndent();
+        printer.decreaseIndent();
 
-        if (staticBlockCode || this.members.length) {
+        if (staticBlockCode || this.members.size) {
             printer.writeln('}');
         } else {
             printer.code('}');
@@ -383,27 +330,32 @@ class ClassDeclaration extends Declaration {
     }
 }
 
+exports.ClassDeclaration = ClassDeclaration;
+
 class InterfaceDeclaration extends Declaration {
     accessor;// 'public' | 'private' | 'protected'
     isStatic;
 
-    members = [];
+    members = new Map();
 
     constructor(parent, name, pos, end) {
         super(parent, pos, end);
         this.name = name;
-        this.explicitType = getType(name, () => new NormalType(name));
+
+        const moduleFullName = this.module ? this.module.fullName : null;
+        this.inferType = new VariableType(moduleFullName, name);
 
         this.applyClosure();
         this.closure.var('this', this);
-        this.closure.var(name, this);
+        this.closure.var(name.text, this);
 
-        this.fullName = parent.fullName + '.' + name;
+        this.fullName = parent.fullName + '.' + name.text;
     }
 
     addMember(member) {
-        this.members.push(member);
-        this.closure.var(member.name, member);
+        this.members.set(member.name.text, member);
+        this.inferType.members.set(member.name.text, member.type);
+        this.closure.var(member.name.text, member);
     }
 
     forEachChild(cb) {
@@ -412,28 +364,28 @@ class InterfaceDeclaration extends Declaration {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
         printer.writeModifiers(this);
 
         printer.write('interface');
 
-        printer.write(this.name);
+        printer.write(this.name.getText());
 
         printer.write('{');
 
-        compileUtils.increaseIndent();
-        for (let member of this.members) {
+        printer.increaseIndent();
+        for (let [_, member] of this.members) {
             printer.writeln(member.getText());
             printer.code(';');
         }
-        compileUtils.decreaseIndent();
+        printer.decreaseIndent();
         printer.writeln('}');
 
         return printer.getText();
     }
 }
+
+exports.InterfaceDeclaration = InterfaceDeclaration;
 
 class MemberDeclaration extends Declaration {
     accessor;// 'public' | 'private' | 'protected'
@@ -444,6 +396,9 @@ class MemberDeclaration extends Declaration {
     }
 }
 
+exports.MemberDeclaration = MemberDeclaration;
+
+
 class JavaModule extends ClassDeclaration {
     project;
     imports = new Set();
@@ -452,21 +407,28 @@ class JavaModule extends ClassDeclaration {
     namedBindings = new Map();
     fileName;
 
+    printOptions = new PrintOptions();
+
+    isResolved = false;
+
     constructor(project, fileName, packageName, name, pos, end) {
         super(null, name, pos, end);
         this.fileName = fileName;
         this.packageName = packageName;
         this.fullName = packageName + '.' + name;
-        this.project = project;
+        this.inferType = new ClassType(this.fullName, name);
+
         this.module = this;
-        this.staticBlock.module = this;
+        this.project = project;
 
-        this.accessor = 'public';
-
+        this.staticBlock = new ClassStaticBlockDeclaration(this);
         this.staticBlock.applyClosure();
-        this.applyClosure(name);
+
+        this.applyClosure();
         this.closure.var('this', this);
         this.closure.var(name, this);
+
+        this.accessor = 'public';
     }
 
     forEachChild(cb) {
@@ -475,8 +437,7 @@ class JavaModule extends ClassDeclaration {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         printer.writeln(`package ${this.packageName};`);
         printer.writeln();
@@ -497,19 +458,28 @@ class JavaModule extends ClassDeclaration {
     }
 }
 
-class Identifier extends ASTNode {
+exports.JavaModule = JavaModule;
+
+class Identifier extends NamedEntity {
     text;
 
     declaration;
 
-    constructor(parent, pos, end) {
+    get type() {
+        return this.declaration.type;
+    }
+
+    constructor(parent, text, pos, end) {
         super(parent, pos, end);
+        this.text = text;
     }
 
     getText() {
         return this.text;
     }
 }
+
+exports.Identifier = Identifier;
 
 class ImportDeclaration extends ASTNode {
     moduleNamedBindings = new Set();
@@ -521,26 +491,33 @@ class ImportDeclaration extends ASTNode {
     }
 }
 
+exports.ImportDeclaration = ImportDeclaration;
+
 class PropertyDeclaration extends MemberDeclaration {
-    #initializer;
+    __initializer;
 
     get initializer() {
-        return this.#initializer;
+        return this.__initializer;
     }
 
     set initializer(value) {
-        this.#initializer = value;
+        this.__initializer = value;
         if (value) {
             const valueType = value.type;
             if (valueType) {
-                this.implicitType = valueType;
+                this.inferType = valueType;
+            }
+
+            if (value instanceof NamedEntity) {
+                value.replaceWith = (newNode) => {
+                    this.__initializer = newNode;
+                }
             }
         }
     }
 
     constructor(parent, name, pos, end) {
-        super(parent, pos, end);
-        this.name = name;
+        super(parent, name, pos, end);
         this.fullName = parent.fullName + '.' + name;
     }
 
@@ -550,13 +527,12 @@ class PropertyDeclaration extends MemberDeclaration {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
         printer.writeModifiers(this);
 
         printer.writeType(this.type, 'Object');
 
-        printer.write(this.name);
+        printer.write(this.name.getText());
 
         if (this.initializer) {
             printer.write(this.initializer.getText(), ' = ');
@@ -567,36 +543,48 @@ class PropertyDeclaration extends MemberDeclaration {
     }
 }
 
+exports.PropertyDeclaration = PropertyDeclaration;
+
 function isFunction(node) {
     return 'returnType' in node
-        && 'parameters' in node
-        && 'typeParameters' in node;
+        && 'parameters' in node;
 
 }
 
+exports.isFunction = isFunction;
+
 class ConstructorDeclaration extends MemberDeclaration {
-    explicitReturnType;
-    implicitReturnType = getType('void');
-    typeParameters = [];
+    __initialReturnType;
+
     parameters = [];
     body;
 
     constructor(parent, pos, end) {
-        super(parent, pos, end);
-        this.name = parent.name;
-        this.explicitType = parent.type;
-        this.explicitReturnType = parent.type;
+        super(parent, parent.name, pos, end);
+        this.initialReturnType = parent.type;
         this.applyClosure();
+
+        const moduleFullName = this.module ? this.module.fullName : null;
+        this.inferType = new FunctionType(moduleFullName, this.typeParameters, this.initialReturnType);
     }
 
     addParameter(parameter) {
         this.parameters.push(parameter);
         this.typeParameters.push(parameter.type);
-        this.closure.var(parameter.name.escapedText, parameter);
+        this.closure.var(parameter.name.text, parameter);
+    }
+
+    get initialReturnType() {
+        return this.__initialReturnType;
+    }
+
+    set initialReturnType(value) {
+        this.__initialReturnType = value;
+        this.inferType.returnType = this.returnType;
     }
 
     get returnType() {
-        return this.explicitReturnType || this.implicitReturnType;
+        return this.initialReturnType || this.inferReturnType;
     }
 
     forEachChild(cb) {
@@ -605,12 +593,11 @@ class ConstructorDeclaration extends MemberDeclaration {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         printer.writeModifiers(this);
 
-        printer.write(this.name);
+        printer.write(this.name.getText());
 
         printer.writeParams(this.parameters);
 
@@ -620,17 +607,21 @@ class ConstructorDeclaration extends MemberDeclaration {
     }
 }
 
+exports.ConstructorDeclaration = ConstructorDeclaration;
+
 class MethodDeclaration extends MemberDeclaration {
-    explicitReturnType;
-    implicitReturnType = getType('void');
-    typeParameters = [];
+    __initialReturnType;
+    __inferReturnType = VoidType;
+
     parameters = [];
     body;
 
     constructor(parent, name, pos, end) {
-        super(parent, pos, end);
-        this.name = name;
-        this.applyClosure(name);
+        super(parent, name, pos, end);
+        this.applyClosure();
+
+        const moduleFullName = this.module ? this.module.fullName : null;
+        this.inferType = new FunctionType(moduleFullName, this.typeParameters, this.initialReturnType);
     }
 
     addParameter(parameter) {
@@ -639,8 +630,26 @@ class MethodDeclaration extends MemberDeclaration {
         this.closure.var(parameter.name, parameter);
     }
 
+    get inferReturnType() {
+        return this.__inferReturnType;
+    }
+
+    set inferReturnType(inferReturnType) {
+        this.__inferReturnType = inferReturnType;
+        this.inferType.returnType = this.returnType;
+    }
+
+    get initialReturnType() {
+        return this.__initialReturnType;
+    }
+
+    set initialReturnType(value) {
+        this.__initialReturnType = value;
+        this.inferType.returnType = this.returnType;
+    }
+
     get returnType() {
-        return this.explicitReturnType || this.implicitReturnType;
+        return this.initialReturnType || this.inferReturnType;
     }
 
     forEachChild(cb) {
@@ -649,14 +658,13 @@ class MethodDeclaration extends MemberDeclaration {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         printer.writeModifiers(this);
 
         printer.writeType(this.returnType);
 
-        printer.write(this.name);
+        printer.write(this.name.getText());
 
         printer.writeParams(this.parameters);
 
@@ -666,48 +674,32 @@ class MethodDeclaration extends MemberDeclaration {
     }
 }
 
-class FunctionDeclaration extends Declaration {
-    explicitReturnType;
-    implicitReturnType = getType('void');
-    typeParameters = [];
-    parameters = [];
-    body;
-
-    constructor(parent, name, pos, end) {
-        super(parent, pos, end);
-        this.name = name;
-        this.applyClosure(name);
-    }
-
-    addParameter(parameter) {
-        this.parameters.push(parameter);
-        this.typeParameters.push(parameter.type);
-        this.closure.var(parameter.name.escapedText, parameter);
-    }
-
-    get returnType() {
-        return this.explicitReturnType || this.implicitReturnType;
-    }
-
-    forEachChild(cb) {
-        this.parameters.forEach(node => cb(node));
-        cb(this.body);
-    }
-}
+exports.MethodDeclaration = MethodDeclaration;
 
 class ParameterDeclaration extends Declaration {
-    #initializer;
+    __initializer;
+
+    get type() {
+        const moduleFullName = this.module ? this.module.fullName : null;
+        return new ParameterType(moduleFullName, super.type, this.initializer);
+    }
 
     get initializer() {
-        return this.#initializer;
+        return this.__initializer;
     }
 
     set initializer(value) {
-        this.#initializer = value;
+        this.__initializer = value;
         if (value) {
             const valueType = value.type;
             if (valueType) {
-                this.implicitType = valueType;
+                this.inferType = valueType;
+            }
+
+            if (value instanceof NamedEntity) {
+                value.replaceWith = (newNode) => {
+                    this.__initializer = newNode;
+                }
             }
         }
     }
@@ -715,7 +707,9 @@ class ParameterDeclaration extends Declaration {
     constructor(parent, name, pos, end) {
         super(parent, pos, end);
         this.name = name;
-        this.fullName = parent.fullName + '.' + name;
+        if (parent.fullName) {
+            this.fullName = parent.fullName + '.' + name.getText();
+        }
     }
 
 
@@ -724,37 +718,43 @@ class ParameterDeclaration extends Declaration {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         printer.writeType(this.type);
         printer.write(this.name);
 
-        if (this.initializer) {
-            const initializerCode = this.initializer.getText();
-            if (initializerCode) {
-                printer.write('=');
-                printer.write(initializerCode);
-            }
-        }
+        // if (this.initializer) {
+        //     const initializerCode = this.initializer.getText();
+        //     if (initializerCode) {
+        //         printer.write('=');
+        //         printer.write(initializerCode);
+        //     }
+        // }
 
         return printer.getText();
     }
 }
 
+exports.ParameterDeclaration = ParameterDeclaration;
+
 class VariableDeclaration extends Declaration {
-    #initializer;
+    __initializer;
 
     get initializer() {
-        return this.#initializer;
+        return this.__initializer;
     }
 
     set initializer(value) {
-        this.#initializer = value;
+        this.__initializer = value;
         if (value) {
             const valueType = value.type;
             if (valueType) {
-                this.implicitType = valueType;
+                this.inferType = valueType;
+            }
+            if (value instanceof NamedEntity) {
+                value.replaceWith = (newNode) => {
+                    this.__initializer = newNode;
+                }
             }
         }
     }
@@ -762,7 +762,7 @@ class VariableDeclaration extends Declaration {
     constructor(parent, name, pos, end) {
         super(parent, pos, end);
         this.name = name;
-        this.fullName = parent.fullName + '.' + name;
+        this.fullName = parent.fullName + '.' + name.getText();
     }
 
     forEachChild(cb) {
@@ -770,14 +770,13 @@ class VariableDeclaration extends Declaration {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         printer.writeModifiers(this);
 
         printer.writeType(this.type, 'var');
 
-        printer.write(this.name);
+        printer.write(this.name.getText());
 
         if (this.initializer) {
             const initializerCode = this.initializer.getText();
@@ -790,6 +789,8 @@ class VariableDeclaration extends Declaration {
         return printer.getText();
     }
 }
+
+exports.VariableDeclaration = VariableDeclaration;
 
 class ClassStaticBlockDeclaration extends ASTNode {
     body;
@@ -807,26 +808,27 @@ class ClassStaticBlockDeclaration extends ASTNode {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         if (this.body.statements.length > 0) {
             printer.write('static');
             printer.write('{');
-            compileUtils.increaseIndent();
+            printer.increaseIndent();
             const bodyCode = this.body.getText();
             if (bodyCode) {
                 printer.writeln(bodyCode);
-                compileUtils.decreaseIndent();
+                printer.decreaseIndent();
                 printer.writeln('}');
             } else {
-                compileUtils.decreaseIndent();
+                printer.decreaseIndent();
                 printer.code('}');
             }
         }
         return printer.getText();
     }
 }
+
+exports.ClassStaticBlockDeclaration = ClassStaticBlockDeclaration;
 
 class VariableDeclarationList extends ASTNode {
 
@@ -841,8 +843,7 @@ class VariableDeclarationList extends ASTNode {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         for (let declaration of this.declarations) {
             const declarationCode = declaration.getText();
@@ -853,11 +854,13 @@ class VariableDeclarationList extends ASTNode {
     }
 }
 
+exports.VariableDeclarationList = VariableDeclarationList;
+
 //==============//
 //   Closure   //
 //=============//
 class Block extends ASTNode {
-    implicitReturnType = getType('void');
+    inferReturnType = VoidType;
     statements = [];
 
     constructor(parent, pos, end) {
@@ -885,8 +888,7 @@ class Block extends ASTNode {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
         for (let statement of this.statements) {
             const statementCode = statement.getText();
             if (statementCode) {
@@ -904,6 +906,8 @@ class Block extends ASTNode {
     }
 }
 
+exports.Block = Block;
+
 //==============//
 //  Statement  //
 //=============//
@@ -913,6 +917,8 @@ class Statement extends ASTNode {
     }
 }
 
+exports.Statement = Statement;
+
 class ExpressionStatement extends Statement {
     expression;
 
@@ -921,16 +927,31 @@ class ExpressionStatement extends Statement {
     }
 }
 
+exports.ExpressionStatement = ExpressionStatement;
+
 class ArrayLiteralExpression extends Statement {
     elements = [];
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
     }
+
+    addElement(element) {
+        const index = this.elements.length;
+        this.elements.push(element);
+
+        if (element instanceof NamedEntity) {
+            element.replaceWith = (newNode) => {
+                this.elements[index] = newNode;
+            }
+        }
+    }
 }
 
-class VariableStatement extends Statement {
+exports.ArrayLiteralExpression = ArrayLiteralExpression;
 
+class VariableStatement extends Statement {
+    isDeclare;
     accessor;
     isStatic;
     declarationList;
@@ -948,19 +969,48 @@ class VariableStatement extends Statement {
     }
 }
 
+exports.VariableStatement = VariableStatement;
+
 class NewExpression extends ASTNode {
 
-    expression;
+    __expression;
 
     arguments = [];
+
+    type;
+
+    get expression() {
+        return this.__expression;
+    }
+
+    set expression(value) {
+        this.__expression = value;
+        this.type = value.type;
+
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__expression = newNode;
+            }
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
     }
 
+    addArgument(arg) {
+        const index = this.arguments.length;
+        this.arguments.push(arg);
+
+        if (arg instanceof NamedEntity) {
+            arg.replaceWith = (newNode) => {
+                this.arguments[index] = newNode;
+            }
+        }
+    }
+
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         printer.write('new');
         printer.write(this.expression.getText());
@@ -970,12 +1020,28 @@ class NewExpression extends ASTNode {
     }
 }
 
+exports.NewExpression = NewExpression;
+
 class IfStatement extends Statement {
-    expression;
+    __expression;
     thenStatement;
     thenClosure;
     elseStatement;
     elseClosure;
+
+    get expression() {
+        return this.__expression;
+    }
+
+    set expression(value) {
+        this.__expression = value;
+
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__expression = newNode;
+            }
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -995,8 +1061,7 @@ class IfStatement extends Statement {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         printer.write('if');
         printer.write('(');
@@ -1014,6 +1079,8 @@ class IfStatement extends Statement {
     }
 }
 
+exports.IfStatement = IfStatement;
+
 class IterationStatement extends Statement {
     statement;
 
@@ -1027,8 +1094,23 @@ class IterationStatement extends Statement {
     }
 }
 
+exports.IterationStatement = IterationStatement;
+
 class DoStatement extends IterationStatement {
-    expression;
+    __expression;
+
+    get expression() {
+        return this.__expression;
+    }
+
+    set expression(value) {
+        this.__expression = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__expression = newNode;
+            }
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -1039,9 +1121,24 @@ class DoStatement extends IterationStatement {
         super.forEachChild(cb);
     }
 }
+
+exports.DoStatement = DoStatement;
 
 class WhileStatement extends IterationStatement {
-    expression;
+    __expression;
+
+    get expression() {
+        return this.__expression;
+    }
+
+    set expression(value) {
+        this.__expression = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__expression = newNode;
+            }
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -1053,10 +1150,51 @@ class WhileStatement extends IterationStatement {
     }
 }
 
+exports.WhileStatement = WhileStatement;
+
 class ForStatement extends IterationStatement {
-    initializer;
-    condition;
-    incrementor;
+    __initializer;
+    __condition;
+    __incrementor;
+
+    get initializer() {
+        return this.__initializer;
+    }
+
+    set initializer(value) {
+        this.__initializer = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__initializer = newNode;
+            }
+        }
+    }
+
+    get condition() {
+        return this.__condition;
+    }
+
+    set condition(value) {
+        this.__condition = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__condition = newNode;
+            }
+        }
+    }
+
+    get incrementor() {
+        return this.__incrementor;
+    }
+
+    set incrementor(value) {
+        this.__incrementor = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__incrementor = newNode;
+            }
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -1070,8 +1208,7 @@ class ForStatement extends IterationStatement {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         printer.write('for');
         printer.write('(');
@@ -1087,9 +1224,37 @@ class ForStatement extends IterationStatement {
     }
 }
 
+exports.ForStatement = ForStatement;
+
 class ForInStatement extends IterationStatement {
-    initializer;
-    expression;
+    __initializer;
+    __expression;
+
+    get initializer() {
+        return this.__initializer;
+    }
+
+    set initializer(value) {
+        this.__initializer = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__initializer = newNode;
+            }
+        }
+    }
+
+    get expression() {
+        return this.__expression;
+    }
+
+    set expression(value) {
+        this.__expression = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__expression = newNode;
+            }
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -1102,8 +1267,7 @@ class ForInStatement extends IterationStatement {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         printer.write('for');
         printer.write('(');
@@ -1119,18 +1283,39 @@ class ForInStatement extends IterationStatement {
     }
 }
 
+exports.ForInStatement = ForInStatement;
+
 class ForOfStatement extends IterationStatement {
-    initializer;
-    #expression;
+    __initializer;
+    __expression;
+
+    get initializer() {
+        return this.__initializer;
+    }
+
+    set initializer(value) {
+        this.__initializer = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__initializer = newNode;
+            }
+        }
+    }
 
     get expression() {
-        return this.#expression;
+        return this.__expression;
     }
 
     set expression(value) {
-        this.#expression = value;
-        if (this.initializer && value.elementType) {
-            this.initializer.implicitType = value.elementType;
+        this.__expression = value;
+        const valueType = value.type;
+        if (this.initializer && valueType && valueType.elementType) {
+            this.initializer.inferType = valueType.elementType;
+        }
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__expression = newNode;
+            }
         }
     }
 
@@ -1145,8 +1330,7 @@ class ForOfStatement extends IterationStatement {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         printer.write('for');
         printer.write('(');
@@ -1160,6 +1344,8 @@ class ForOfStatement extends IterationStatement {
     }
 }
 
+exports.ForOfStatement = ForOfStatement;
+
 class BreakStatement extends Statement {
     label;
 
@@ -1169,6 +1355,8 @@ class BreakStatement extends Statement {
 
 }
 
+exports.BreakStatement = BreakStatement;
+
 class ContinueStatement extends Statement {
     label;
 
@@ -1177,9 +1365,24 @@ class ContinueStatement extends Statement {
     }
 }
 
+exports.ContinueStatement = ContinueStatement;
+
 
 class ReturnStatement extends Statement {
-    expression;
+    __expression;
+
+    get expression() {
+        return this.__expression;
+    }
+
+    set expression(value) {
+        this.__expression = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__expression = newNode;
+            }
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -1190,8 +1393,7 @@ class ReturnStatement extends Statement {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         printer.write('return');
 
@@ -1205,10 +1407,25 @@ class ReturnStatement extends Statement {
     }
 }
 
+exports.ReturnStatement = ReturnStatement;
+
 class SwitchStatement extends Statement {
-    expression;
+    __expression;
     caseBlock;
     possiblyExhaustive;
+
+    get expression() {
+        return this.__expression;
+    }
+
+    set expression(value) {
+        this.__expression = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__expression = newNode;
+            }
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -1218,6 +1435,8 @@ class SwitchStatement extends Statement {
         cb(this.expression);
     }
 }
+
+exports.SwitchStatement = SwitchStatement;
 
 class CaseBlock extends ASTNode {
     clauses = [];
@@ -1231,9 +1450,24 @@ class CaseBlock extends ASTNode {
     }
 }
 
+exports.CaseBlock = CaseBlock;
+
 class CaseClause extends ASTNode {
-    expression;
+    __expression;
     statements = [];
+
+    get expression() {
+        return this.__expression;
+    }
+
+    set expression(value) {
+        this.__expression = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__expression = newNode;
+            }
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -1246,6 +1480,8 @@ class CaseClause extends ASTNode {
     }
 }
 
+exports.CaseClause = CaseClause;
+
 class DefaultClause extends ASTNode {
     statements;
 
@@ -1255,8 +1491,23 @@ class DefaultClause extends ASTNode {
     }
 }
 
+exports.DefaultClause = DefaultClause;
+
 class ThrowStatement extends Statement {
-    expression;
+    __expression;
+
+    get expression() {
+        return this.__expression;
+    }
+
+    set expression(value) {
+        this.__expression = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                thisthis.__expression = newNode;
+            }
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -1270,6 +1521,8 @@ class ThrowStatement extends Statement {
         return 'throw ' + this.expression.getText();
     }
 }
+
+exports.ThrowStatement = ThrowStatement;
 
 class TryStatement extends Statement {
     tryBlock;
@@ -1303,6 +1556,8 @@ class TryStatement extends Statement {
     }
 }
 
+exports.TryStatement = TryStatement;
+
 class CatchClause extends ASTNode {
     variableDeclaration;
     block;
@@ -1317,6 +1572,8 @@ class CatchClause extends ASTNode {
     }
 }
 
+exports.CatchClause = CatchClause;
+
 //==============//
 //  Statement  //
 //=============//
@@ -1326,6 +1583,8 @@ class Expression extends ASTNode {
     }
 }
 
+exports.Expression = Expression;
+
 class ClassExpression extends ClassDeclaration {
 
     constructor(parent, name, pos, end) {
@@ -1333,10 +1592,53 @@ class ClassExpression extends ClassDeclaration {
     }
 }
 
+exports.ClassExpression = ClassExpression;
+
 class BinaryExpression extends Expression {
-    left;
+    __left;
     operator;
-    right;
+    __right;
+
+    get left() {
+        return this.__left;
+    }
+
+    set left(value) {
+        this.__left = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__left = newNode;
+            }
+        }
+    }
+
+    get right() {
+        return this.__right;
+    }
+
+    set right(value) {
+        this.__right = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__right = newNode;
+            }
+        }
+    }
+
+    get type() {
+        const leftType = this.left.type;
+        const rightType = this.right.type;
+
+        if (leftType === StringType || rightType === StringType) {
+            return StringType;
+        } else if (leftType === DoubleType || rightType === DoubleType) {
+            return DoubleType;
+        } else if (leftType === IntType || rightType === IntType) {
+            return IntType;
+        } else if (leftType === BooleanType || rightType === BooleanType) {
+            return BooleanType;
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -1348,8 +1650,7 @@ class BinaryExpression extends Expression {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         printer.write(this.left.getText());
 
@@ -1361,43 +1662,88 @@ class BinaryExpression extends Expression {
     }
 }
 
+exports.BinaryExpression = BinaryExpression;
+
+/// 3 * (1+2)
 class ParenthesizedExpression extends Expression {
-    expression;
+    __expression;
+
+
+    get expression() {
+        return this.__expression;
+    }
+
+    set expression(value) {
+        this.__expression = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__expression = newNode;
+            }
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
     }
 }
 
+exports.ParenthesizedExpression = ParenthesizedExpression;
+
+/// () -> {}
 class LambdaFunction extends ASTNode {
-    explicitReturnType;
-    implicitReturnType = getType('void');
-    typeParameters = [];
-    parameters = [];
+    __initialReturnType;
+    __inferReturnType = VoidType;
+
+    arguments = [];
     body;
-    equalsGreaterThanToken;
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
-        this.applyClosure('');
+        this.applyClosure();
+
+        const moduleFullName = this.module ? this.module.fullName : null;
+        this.inferType = new FunctionType(moduleFullName, this.typeParameters, this.initialReturnType);
     }
 
-    addParameter(parameter) {
-        this.parameters.push(parameter);
-        this.typeParameters.push(parameter.type);
-        this.closure.var(parameter.name, parameter);
+    addArgument(arg) {
+        const index = this.arguments.length;
+        this.arguments.push(arg);
+        this.typeParameters.push(arg.type);
+        this.closure.var(arg.name, arg);
+        if (arg instanceof NamedEntity) {
+            arg.replaceWith = (newNode) => {
+                this.arguments[index] = newNode;
+            }
+        }
+    }
+
+    get inferReturnType() {
+        return this.__inferReturnType;
+    }
+
+    set inferReturnType(inferReturnType) {
+        this.__inferReturnType = inferReturnType;
+        this.inferType.returnType = this.returnType;
+    }
+
+    get initialReturnType() {
+        return this.__initialReturnType;
+    }
+
+    set initialReturnType(value) {
+        this.__initialReturnType = value;
+        this.inferType.returnType = this.returnType;
     }
 
     forEachChild(cb) {
-        this.parameters.forEach(node => cb(node));
+        this.arguments.forEach(node => cb(node));
         cb(this.body);
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
-        printer.writeParams(this.parameters);
+        printer.writeParams(this.arguments);
         printer.write('->')
         printer.writeBody(this.body);
 
@@ -1405,12 +1751,52 @@ class LambdaFunction extends ASTNode {
     }
 }
 
+exports.LambdaFunction = LambdaFunction;
+
+/// a? b: c
 class ConditionalExpression extends Expression {
-    condition;
-    questionToken;
-    whenTrue;
-    colonToken;
-    whenFalse;
+    __condition;
+    __whenTrue;
+    __whenFalse;
+
+    get condition() {
+        return this.__condition;
+    }
+
+    set condition(value) {
+        this.__condition = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__condition = newNode;
+            }
+        }
+    }
+
+    get whenTrue() {
+        return this.__whenTrue;
+    }
+
+    set whenTrue(value) {
+        this.__whenTrue = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__whenTrue = newNode;
+            }
+        }
+    }
+
+    get whenFalse() {
+        return this.__whenFalse;
+    }
+
+    set whenFalse(value) {
+        this.__whenFalse = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__whenFalse = newNode;
+            }
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -1423,9 +1809,24 @@ class ConditionalExpression extends Expression {
     }
 }
 
+exports.ConditionalExpression = ConditionalExpression;
+
 class PrefixUnaryExpression extends Expression {
     operator;
-    operand;
+    __operand;
+
+    get operand() {
+        return this.__operand;
+    }
+
+    set operand(value) {
+        this.__operand = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__operand = newNode;
+            }
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -1437,8 +1838,7 @@ class PrefixUnaryExpression extends Expression {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         printer.write(this.operator);
         printer.code(this.operand.getText());
@@ -1447,9 +1847,25 @@ class PrefixUnaryExpression extends Expression {
     }
 }
 
+exports.PrefixUnaryExpression = PrefixUnaryExpression;
+
+
 class PostfixUnaryExpression extends Expression {
     operator;
-    operand;
+    __operand;
+
+    get operand() {
+        return this.__operand;
+    }
+
+    set operand(value) {
+        this.__operand = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__operand = newNode;
+            }
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -1461,8 +1877,7 @@ class PostfixUnaryExpression extends Expression {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         printer.write(this.operand.getText());
         printer.code(this.operator);
@@ -1471,16 +1886,42 @@ class PostfixUnaryExpression extends Expression {
     }
 }
 
+exports.PostfixUnaryExpression = PostfixUnaryExpression;
+
 /**
  * expression(...arguments)
  */
 class CallExpression extends Expression {
-    expression;
+    __expression;
     typeArguments;
     arguments = [];
 
+    get expression() {
+        return this.__expression;
+    }
+
+    set expression(value) {
+        this.__expression = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__expression = newNode;
+            }
+        }
+    }
+
     constructor(parent, pos, end) {
         super(parent, pos, end);
+    }
+
+    addArgument(arg) {
+        const index = this.arguments.length;
+        this.arguments.push(arg);
+
+        if (arg instanceof NamedEntity) {
+            arg.replaceWith = (newNode) => {
+                this.arguments[index] = newNode;
+            }
+        }
     }
 
     forEachChild(cb) {
@@ -1489,24 +1930,61 @@ class CallExpression extends Expression {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         printer.write(this.expression.getText());
 
-        printer.writeArguments(this.arguments);
+        printer.writeArguments(this.arguments, this.expression.type);
 
         return printer.getText();
     }
 }
 
+exports.CallExpression = CallExpression;
+
 /**
  * expression.name
  */
-class PropertyAccessExpression extends Expression {
-    expression;
-    questionDotToken;
-    name;
+class PropertyAccessExpression extends NamedEntity {
+    __expression;
+    __name;
+
+    get name() {
+        return this.__name;
+    }
+
+    set name(value) {
+        this.__name = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__name = newNode;
+            }
+        }
+    }
+
+    get expression() {
+        return this.__expression;
+    }
+
+    set expression(value) {
+        this.__expression = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__expression = newNode;
+            }
+        }
+    }
+
+    get type() {
+        if (this.expression) {
+            const expressionType = this.expression.type;
+            return expressionType.members.get(this.name);
+        } else {
+            const compileUtils = this.module.project.compileUtils;
+            const declaration = compileUtils.getClosureFromNode(this).get(name);
+            return declaration.type;
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -1517,24 +1995,150 @@ class PropertyAccessExpression extends Expression {
     }
 
     getText() {
-        const compileUtils = this.module.project.compileUtils;
-        const printer = new Printer(compileUtils);
+        const printer = this.createPrinter();
 
         printer.code(this.expression.getText());
         printer.code('.');
-        printer.code(this.name);
+        printer.code(this.name.getText());
 
         return printer.getText();
     }
 }
 
+exports.PropertyAccessExpression = PropertyAccessExpression;
+
+/**
+ * const a: Map.entry;
+ */
+class QualifiedName extends NamedEntity {
+    __left;
+    __right;
+
+    get left() {
+        return this.__left;
+    }
+
+    set left(value) {
+        this.__left = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__left = newNode;
+            }
+        }
+    }
+
+    get right() {
+        return this.__right;
+    }
+
+    set right(value) {
+        this.__right = value;
+        this.inferType = value.type;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__right = newNode;
+            }
+        }
+    }
+
+    constructor(parent, pos, end) {
+        super(parent, pos, end);
+    }
+
+    get type() {
+        const printer = this.createPrinter();
+
+        printer.code(this.left.getText());
+        printer.code('.');
+        printer.code(this.right.getText());
+
+        return printer.getText();
+    }
+}
+
+exports.QualifiedName = QualifiedName;
+
+class TypeReference extends ASTNode {
+    __typeName;
+
+    typeArguments = [];
+
+    __type;
+
+    get typeName() {
+        return this.__typeName;
+    }
+
+    set typeName(value) {
+        this.__typeName = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__typeName = newNode;
+            }
+        }
+    }
+
+    constructor(parent, pos, end) {
+        super(parent, pos, end);
+    }
+
+    addArgument(arg) {
+        const index = this.arguments.length;
+        this.arguments.push(arg);
+
+        if (arg instanceof NamedEntity) {
+            arg.replaceWith = (newNode) => {
+                this.arguments[index] = newNode;
+            }
+        }
+    }
+
+    get type() {
+        if (!this.__type) {
+            this.__type = this.typeName.type.getRuntime(this.typeArguments);
+        }
+        return this.__type;
+    }
+
+    getText() {
+        return this.type.getText();
+    }
+}
+
+exports.TypeReference = TypeReference;
+
 /**
  * array[key]
  */
 class ElementAccessExpression extends Expression {
-    expression;
-    questionDotToken;
-    argumentExpression;
+    __expression;
+    __argumentExpression;
+
+    get expression() {
+        return this.__expression;
+    }
+
+    set expression(value) {
+        this.__expression = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__expression = newNode;
+            }
+        }
+    }
+
+    get argumentExpression() {
+        return this.__argumentExpression;
+    }
+
+    set argumentExpression(value) {
+        this.__argumentExpression = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__argumentExpression = newNode;
+            }
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -1545,6 +2149,8 @@ class ElementAccessExpression extends Expression {
         cb(this.argumentExpression);
     }
 }
+
+exports.ElementAccessExpression = ElementAccessExpression;
 
 /**
  * { a: 1, b: 2 }
@@ -1561,13 +2167,40 @@ class ObjectLiteralExpression extends Expression {
     }
 }
 
+exports.ObjectLiteralExpression = ObjectLiteralExpression;
+
 /**
  * a: 2
  */
 class PropertyAssignment extends ASTNode {
-    parent;
-    name;
-    initializer;
+    __name;
+    __initializer;
+
+    get name() {
+        return this.__name;
+    }
+
+    set name(value) {
+        this.__name = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__name = newNode;
+            }
+        }
+    }
+
+    get initializer() {
+        return this.__initializer;
+    }
+
+    set initializer(value) {
+        this.__initializer = value;
+        if (value instanceof NamedEntity) {
+            value.replaceWith = (newNode) => {
+                this.__initializer = newNode;
+            }
+        }
+    }
 
     constructor(parent, pos, end) {
         super(parent, pos, end);
@@ -1578,10 +2211,12 @@ class PropertyAssignment extends ASTNode {
     }
 }
 
+exports.PropertyAssignment = PropertyAssignment;
 
 //==============//
 //  Statement  //
 //=============//
+
 class Literal extends ASTNode {
     type;
     text;
@@ -1598,37 +2233,53 @@ class Literal extends ASTNode {
     }
 }
 
+exports.Literal = Literal;
+
 /// true
+
 class TrueKeyword extends Literal {
 
     constructor(parent, pos, end) {
-        super(parent, getType('boolean'), 'true', pos, end);
+        super(parent, BooleanType, 'true', pos, end);
     }
 }
 
+exports.TrueKeyword = TrueKeyword;
+
 /// false
+
 class FalseKeyword extends Literal {
 
     constructor(parent, pos, end) {
-        super(parent, getType('boolean'), 'false', pos, end);
+        super(parent, BooleanType, 'false', pos, end);
     }
 }
 
+exports.FalseKeyword = FalseKeyword;
+
 /// this.a
+
 class ThisKeyword extends Literal {
+    declaration;
+
     constructor(parent, pos, end) {
         const compileUtils = parent.module.project.compileUtils;
         const classNode = compileUtils.getClassFromNode(parent);
         super(parent, classNode.type, 'this', pos, end);
+
+        this.declaration = classNode;
     }
 }
 
+exports.ThisKeyword = ThisKeyword;
+
 /// a = 1;
+
 class NumericLiteral extends Literal {
     constructor(parent, text, pos, end) {
-        let type = getType('int');
+        let type = IntType;
         if (text.indexOf('.') >= 0) {
-            type = getType('double');
+            type = DoubleType;
         } else {
             text.replace(/n$/, '');
         }
@@ -1636,95 +2287,36 @@ class NumericLiteral extends Literal {
     }
 }
 
+exports.NumericLiteral = NumericLiteral;
+
 /// a = 1n;
+
 class BigIntLiteral extends Literal {
     constructor(parent, text, pos, end) {
-        super(parent, getType('int'), text.replace(/n$/, ''), pos, end);
+        super(parent, IntType, text.replace(/n$/, ''), pos, end);
     }
 }
+
+exports.BigIntLiteral = BigIntLiteral;
 
 /// a = 'string';
+
 class StringLiteral extends Literal {
     constructor(parent, text, pos, end) {
-        super(parent, getType('String'), `"${text.replace(/\n/, '\\n')}"`, pos, end);
+        super(parent, StringType, `"${text.replace(/\n/, '\\n')}"`, pos, end);
     }
 }
+
+exports.StringLiteral = StringLiteral;
 
 /// /^\d{11}$/
+
 class RegularExpressionLiteral extends Literal {
     constructor(parent, text, pos, end) {
-        super(parent, getType('Pattern'), `Pattern.compile("${text}")`, pos, end);
+        super(parent, typeFinder.get('Pattern'), `Pattern.compile("${text}")`, pos, end);
     }
 }
 
-module.exports = {
-    Closure,
-    ASTNode,
-    Project,
-    JavaModule,
-    Identifier,
-    ImportDeclaration,
-    Declaration,
-    MemberDeclaration,
-    ClassDeclaration,
-    InterfaceDeclaration,
-    PropertyDeclaration,
-    ConstructorDeclaration,
-    MethodDeclaration,
-    FunctionDeclaration,
-    ParameterDeclaration,
-    VariableDeclaration,
-    ClassStaticBlockDeclaration,
-    VariableDeclarationList,
-    Block,
-    Statement,
-    ExpressionStatement,
-    VariableStatement,
-    NewExpression,
-    IfStatement,
-    IterationStatement,
-    DoStatement,
-    WhileStatement,
-    ForStatement,
-    ForInStatement,
-    ForOfStatement,
-    BreakStatement,
-    ContinueStatement,
-    ReturnStatement,
-    SwitchStatement,
-    CaseBlock,
-    CaseClause,
-    DefaultClause,
-    ThrowStatement,
-    TryStatement,
-    CatchClause,
-    Expression,
-    ClassExpression,
-    BinaryExpression,
-    ParenthesizedExpression,
-    LambdaFunction,
-    ConditionalExpression,
-    PrefixUnaryExpression,
-    PostfixUnaryExpression,
-    CallExpression,
-    PropertyAccessExpression,
-    ElementAccessExpression,
-    ObjectLiteralExpression,
-    PropertyAssignment,
-    Literal,
-    TrueKeyword,
-    FalseKeyword,
-    ThisKeyword,
-    NumericLiteral,
-    BigIntLiteral,
-    StringLiteral,
-    RegularExpressionLiteral,
-    ArrayLiteralExpression,
-    isDeclaration,
-    isFunction,
-    Type,
-    NormalType,
-    ArrayType,
-    getType,
-    entityType,
-}
+exports.RegularExpressionLiteral = RegularExpressionLiteral;
+
+

@@ -5,9 +5,9 @@ const { readConfig } = require("../config.js");
 const cwd = process.cwd();
 const config = readConfig();
 
-function toPackageName(fileName) {
+function toPackageName(fileName, rootDir = cwd) {
     const fileDir = path.dirname(fileName);
-    let relative = path.relative(cwd, fileDir);
+    let relative = path.relative(rootDir, fileDir);
     relative = relative.replace(/^src[\\/]?/, '').replace(/[\\/]/, '.');
     let packageName = `${config.java.package}.${relative}`;
     packageName = packageName.replace(/(^\.)|(\.$)/g, '');
@@ -23,14 +23,14 @@ function toClassName(fileName) {
     });
 }
 
-function toClassFullName(fileName) {
-    const packageName = toPackageName(fileName);
+function toClassFullName(fileName, rootDir = cwd) {
+    const packageName = toPackageName(fileName, rootDir);
     const className = toClassName(fileName);
     return `${packageName}.${className}`;
 }
 
-function toClassInfo(fileName) {
-    const packageName = toPackageName(fileName);
+function toClassInfo(fileName, rootDir = cwd) {
+    const packageName = toPackageName(fileName, rootDir);
     const className = toClassName(fileName);
     const fullName = `${packageName}.${className}`;
     return {
@@ -40,20 +40,20 @@ function toClassInfo(fileName) {
     }
 }
 
-function toFileName(classFullName) {
+function toFileName(classFullName, rootDir = cwd) {
     if (classFullName.startsWith(config.java.package)) {
         let relativePath = classFullName.substr(config.java.package);
         relativePath = relativePath.replace(/(?<=\.)(\w+)$/, ($0, $1) => $1.toLowerCase());
         relativePath = relativePath.replace(/\./g, path.sep);
-        return path.join(cwd, 'src', relativePath + '.ts');
+        return path.join(rootDir, 'src', relativePath + '.ts');
     }
 }
 
-function toJavaFile(classFullName) {
+function toJavaFile(classFullName, rootDir = cwd) {
     if (classFullName.startsWith(config.java.package)) {
         let relativePath = classFullName.substr(config.java.package);
         relativePath = relativePath.replace(/\./g, path.sep);
-        return path.join(cwd, 'dist', 'src', 'main', 'java', relativePath + '.java');
+        return path.join(rootDir, 'dist', 'src', 'main', 'java', relativePath + '.java');
     }
 }
 

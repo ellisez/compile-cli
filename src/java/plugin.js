@@ -1,5 +1,6 @@
 const plugin = require("../plugin.js");
 const Parser = require('./parse.js');
+const { entryFile } = require("../pkg.js");
 
 
 module.exports = function (serviceOptions) {
@@ -8,7 +9,7 @@ module.exports = function (serviceOptions) {
     const tsOptions = basePlugin.tsOptions;
 
     const parser = new Parser(tsOptions);
-    const javaBundle = parser.parse();
+    const javaBundle = parser.parse([entryFile]);
     javaBundle.generateBundle();
     javaBundle.writeBundle();
 }

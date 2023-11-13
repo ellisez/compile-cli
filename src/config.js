@@ -1,20 +1,24 @@
 const path = require("node:path");
 const fs = require("node:fs");
+const json = require('./json.js');
 
 let _cfg = null;
 
+exports.readConfig = readConfig;
 function readConfig() {
     if (_cfg) return _cfg;
     const distConfigPath = path.resolve('compile.json');
-    if (fs.existsSync(distConfigPath)) {
-        _cfg = JSON.parse(fs.readFileSync(distConfigPath).toString());
+    const cfg = json.ofFile(distConfigPath);
+    if (cfg) {
+        _cfg = cfg;
     }
     return _cfg
 }
 
+
 _cfg = readConfig();
 
-function writeConfig(fun) {
+exports.writeConfig = function writeConfig(fun) {
     _cfg ??= {};
     const r = fun(_cfg);
 
@@ -33,7 +37,7 @@ function writeConfig(fun) {
 
 let cache = {}
 
-function versionObject(target) {
+exports.versionObject = function versionObject(target) {
     let cacheTarget = cache[target];
     if (!cacheTarget) {
         cacheTarget = {}
@@ -49,4 +53,3 @@ function versionObject(target) {
     return targetVersion;
 }
 
-module.exports = { readConfig, writeConfig, versionObject };

@@ -3,7 +3,8 @@ const process = require('node:process');
 const fs = require('node:fs');
 const ts = require("typescript");
 const log = require("./log.js");
-const { pkgResolve, entryFile } = require("./pkg");
+const { entryFile } = require("./pkg");
+const json = require('./json.js');
 
 const cwd = process.cwd();
 
@@ -50,15 +51,15 @@ function matchNode(id) {
 
 function tsconfig(directory = cwd) {
     let tsconfigPath = path.join(directory, 'tsconfig.json');
-    const json = pkgResolve(tsconfigPath);
-    if (!json) {
+    const tsJson = json.ofFile(tsconfigPath);
+    if (!tsJson) {
         const parentPath = path.dirname(directory);
-        if (!parentPath) {
+        if (!parentPath || parentPath === directory) {
             throw Error(`Not found tsconfig.json in ${cwd}.`);
         }
         return tsconfig(parentPath);
     }
-    return json;
+    return tsJson;
 }
 
 module.exports = function(serviceOptions) {

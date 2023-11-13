@@ -1,17 +1,9 @@
 const path = require("node:path");
 const fs = require("node:fs");
+const json = require('./json.js');
 
 const pkgPath = path.resolve('package.json');
-
-function pkgResolve(pkgPath) {
-    if (fs.existsSync(pkgPath)) {
-        let content = fs.readFileSync(pkgPath).toString();
-        content = content.replace(/\n\s*\/\*.*?\*\//g, '');
-        content = content.replace(/\n\s*\/\/.*\n/g, '');
-        return JSON.parse(content);
-    }
-}
-const pkg = pkgResolve(pkgPath);
+const pkg = json.ofFile(pkgPath);
 
 function entryResolve() {
     let entry = pkg.main;
@@ -29,7 +21,6 @@ const entryFile = entryResolve();
 
 module.exports = {
     pkg,
-    pkgResolve,
     entryFile
 };
 
